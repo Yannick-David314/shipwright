@@ -101,6 +101,8 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     """
     parser = build_parser()
     args: argparse.Namespace = parser.parse_args(argv)
+    if args.path is not None and args.repo is not None and args.path != args.repo:
+        parser.error("give the directory once, either as PATH or with --repo")
     try:
         workspace = resolve_workspace(args.path or args.repo or ".")
     except NotADirectoryError as exc:

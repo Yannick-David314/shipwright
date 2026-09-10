@@ -6,6 +6,7 @@ Contains:
     test_defaults_point_at_the_current_checkout(): no arguments works
     test_repo_argument_is_honoured(): --repo selects the checkout
     test_missing_or_non_directory_path_is_rejected(): bad paths fail at parse time
+    test_path_and_repo_disagreeing_is_rejected(): the directory is given once
     test_provider_argument_is_honoured(): --provider selects the backend
     test_unknown_provider_is_rejected(): a bad provider fails at parse time
     test_cli_exposes_a_tui_flag(): shipwright --tui is a real flag
@@ -42,6 +43,12 @@ def test_missing_or_non_directory_path_is_rejected(tmp_path: Path) -> None:
         build_app([str(tmp_path / "missing")])
     with pytest.raises(SystemExit):
         build_app([str(a_file)])
+
+
+def test_path_and_repo_disagreeing_is_rejected(tmp_path: Path) -> None:
+    """Asserts giving two different directories is an error, not a silent pick."""
+    with pytest.raises(SystemExit):
+        build_app([".", "--repo", str(tmp_path)])
 
 
 def test_provider_argument_is_honoured() -> None:
