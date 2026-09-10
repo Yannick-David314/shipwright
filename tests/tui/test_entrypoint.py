@@ -5,6 +5,7 @@ test_entrypoint.py --- covers the ship console entrypoint and the --tui flag
 Contains:
     test_defaults_point_at_the_current_checkout(): no arguments works
     test_repo_argument_is_honoured(): --repo selects the checkout
+    test_path_argument_accepts_dot_and_parent(): '.' and '..' resolve from the cwd
     test_missing_or_non_directory_path_is_rejected(): bad paths fail at parse time
     test_path_and_repo_disagreeing_is_rejected(): the directory is given once
     test_provider_argument_is_honoured(): --provider selects the backend
@@ -32,6 +33,18 @@ def test_repo_argument_is_honoured(tmp_path: Path) -> None:
     app = build_app(["--repo", str(tmp_path)])
 
     assert app.repo_path == tmp_path.resolve()
+
+
+def test_path_argument_accepts_dot_and_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts ship . opens the current directory and ship .. its parent."""
+    child = tmp_path / "child"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    assert build_app(["."]).repo_path == child.resolve()
+    assert build_app([".."]).repo_path == tmp_path.resolve()
 
 
 def test_missing_or_non_directory_path_is_rejected(tmp_path: Path) -> None:
