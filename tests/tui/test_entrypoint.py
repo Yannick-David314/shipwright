@@ -7,6 +7,7 @@ Contains:
     test_repo_argument_is_honoured(): --repo selects the checkout
     test_path_argument_accepts_dot_and_parent(): '.' and '..' resolve from the cwd
     test_path_argument_accepts_relative_and_absolute(): typed paths resolve
+    test_path_argument_expands_home(): '~' means the home directory
     test_missing_or_non_directory_path_is_rejected(): bad paths fail at parse time
     test_path_and_repo_disagreeing_is_rejected(): the directory is given once
     test_provider_argument_is_honoured(): --provider selects the backend
@@ -59,6 +60,13 @@ def test_path_argument_accepts_relative_and_absolute(
     assert build_app(["b"]).repo_path == (tmp_path / "a" / "b").resolve()
     assert build_app(["../sibling"]).repo_path == (tmp_path / "sibling").resolve()
     assert build_app([str(tmp_path / "sibling")]).repo_path == (tmp_path / "sibling").resolve()
+
+
+def test_path_argument_expands_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asserts ~ is expanded to the home directory rather than read literally."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert build_app(["~"]).repo_path == tmp_path.resolve()
 
 
 def test_missing_or_non_directory_path_is_rejected(tmp_path: Path) -> None:
