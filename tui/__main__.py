@@ -42,7 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open the shipwright terminal interface",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--repo", default=".", help="checkout the agent works on")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        help="directory to work on: '.', '..', a relative path, or an absolute one "
+        "(default: the current directory)",
+    )
+    parser.add_argument("--repo", help="same as PATH; kept for existing scripts")
     parser.add_argument(
         "--provider",
         choices=provider_choices(),
@@ -72,9 +78,10 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
         app: Application pointed at the requested checkout.
     """
     args: argparse.Namespace = build_parser().parse_args(argv)
-    load_env_file(Path(args.repo))
+    workspace = Path(args.path or args.repo or ".")
+    load_env_file(workspace)
     return ShipwrightApp(
-        repo_path=Path(args.repo),
+        repo_path=workspace,
         provider=args.provider,
         gateway_url=args.gateway,
         cost_tracker=CostTracker(),
