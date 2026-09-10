@@ -80,8 +80,14 @@ def resolve_workspace(raw: str) -> Path:
 
     Returns:
         workspace: Absolute, symlink-resolved directory.
+
+    Raises:
+        NotADirectoryError: The path does not exist or is not a directory.
     """
-    return Path(raw).expanduser().resolve()
+    workspace = Path(raw).expanduser().resolve()
+    if not workspace.is_dir():
+        raise NotADirectoryError(f"not a directory: {raw}")
+    return workspace
 
 
 def build_app(argv: list[str] | None = None) -> ShipwrightApp:
@@ -93,8 +99,12 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     Returns:
         app: Application pointed at the requested checkout.
     """
-    args: argparse.Namespace = build_parser().parse_args(argv)
-    workspace = resolve_workspace(args.path or args.repo or ".")
+    parser = build_parser()
+    args: argparse.Namespace = parser.parse_args(argv)
+    try:
+        workspace = resolve_workspace(args.path or args.repo or ".")
+    except NotADirectoryError as exc:
+        parser.error(str(exc))
     load_env_file(workspace)
     return ShipwrightApp(
         repo_path=workspace,
