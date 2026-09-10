@@ -297,6 +297,11 @@ cat > "$BIN_DIR/ship" <<'LAUNCHER'
 set -eu
 IMAGE="${SHIPWRIGHT_IMAGE:-@IMAGE_NAME@}"
 
+die() {
+    printf '\033[31merror:\033[0m %s\n' "$*" >&2
+    exit 1
+}
+
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
     if id -nG 2>/dev/null | tr " " "\n" | grep -qx docker; then
@@ -310,8 +315,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if ! command -v runsc >/dev/null 2>&1; then
-    printf '\033[31merror:\033[0m gVisor (runsc) is not installed; shipwright will not run without it.\n' >&2
-    exit 1
+    die "gVisor (runsc) is not installed; shipwright will not run without it."
 fi
 
 exec docker run --rm -it \
