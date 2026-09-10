@@ -22,14 +22,14 @@ def test_defaults_point_at_the_current_checkout() -> None:
     """Asserts running ship with no arguments targets the current directory."""
     app = build_app([])
 
-    assert app.repo_path == Path(".")
+    assert app.repo_path == Path.cwd().resolve()
 
 
 def test_repo_argument_is_honoured(tmp_path: Path) -> None:
     """Asserts --repo points the interface at the given checkout."""
     app = build_app(["--repo", str(tmp_path)])
 
-    assert app.repo_path == tmp_path
+    assert app.repo_path == tmp_path.resolve()
 
 
 def test_provider_argument_is_honoured() -> None:

@@ -4,6 +4,7 @@ __main__.py --- console entrypoint that opens the terminal interface
 
 Contains:
     build_parser(): builds the argument parser for the ship command
+    resolve_workspace(): turns a typed path into the directory to work on
     provider_choices(): the provider names the entrypoint accepts
     build_app(): builds the application from parsed arguments, loading .env first
     main(): opens the terminal interface and returns its exit status
@@ -68,6 +69,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_workspace(raw: str) -> Path:
+    """Turns a typed path into the absolute directory the agent will work on.
+
+    Relative paths resolve against the directory ship was started in, and a
+    leading ~ expands to the home directory, exactly as a shell would.
+
+    Args:
+        raw: Path as the operator typed it.
+
+    Returns:
+        workspace: Absolute, symlink-resolved directory.
+    """
+    return Path(raw).expanduser().resolve()
+
+
 def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     """Builds the application from parsed command-line arguments.
 
@@ -78,7 +94,7 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
         app: Application pointed at the requested checkout.
     """
     args: argparse.Namespace = build_parser().parse_args(argv)
-    workspace = Path(args.path or args.repo or ".")
+    workspace = resolve_workspace(args.path or args.repo or ".")
     load_env_file(workspace)
     return ShipwrightApp(
         repo_path=workspace,
