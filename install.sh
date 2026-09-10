@@ -290,10 +290,13 @@ mkdir -p "$BIN_DIR"
 
 cat > "$BIN_DIR/ship" <<'LAUNCHER'
 #!/bin/sh
-# ship --- opens the shipwright interface against the current directory.
+# ship --- opens the shipwright interface on a directory.
 #
-# Only $PWD is mounted, so the agent cannot see anything above the directory
-# you run this in. That is the containment boundary.
+# Usage: ship [PATH] [options]
+#
+#   PATH is '.', '..', a relative path, or an absolute one, and defaults to the
+#   current directory. Only that directory is mounted, so the agent cannot see
+#   anything above it. That is the containment boundary.
 set -eu
 IMAGE="${SHIPWRIGHT_IMAGE:-@IMAGE_NAME@}"
 
@@ -301,6 +304,27 @@ die() {
     printf '\033[31merror:\033[0m %s\n' "$*" >&2
     exit 1
 }
+
+# Take the directory out of the arguments and pass everything else through,
+# in order.
+TARGET=""
+remaining=$#
+while [ "$remaining" -gt 0 ]; do
+    arg=$1
+    shift
+    remaining=$((remaining - 1))
+    case "$arg" in
+        -*)
+            set -- "$@" "$arg"
+            ;;
+        *)
+            [ -z "$TARGET" ] || die "give one directory, not both '$TARGET' and '$arg'"
+            TARGET=$arg
+            ;;
+    esac
+done
+
+WORKSPACE=$(cd "${TARGET:-.}" && pwd -P)
 
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
@@ -321,10 +345,10 @@ fi
 exec docker run --rm -it \
     --runtime runsc \
     --workdir /workspace \
-    --mount "type=bind,source=$(pwd),target=/workspace" \
+    --mount "type=bind,source=$WORKSPACE,target=/workspace" \
     --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \
     --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \
-    "$IMAGE" ship --repo /workspace "$@"
+    "$IMAGE" ship /workspace "$@"
 LAUNCHER
 sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
