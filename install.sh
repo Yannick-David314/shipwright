@@ -288,18 +288,18 @@ ok "image built: $($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | aw
 step "Installing launchers"
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/ship" <<LAUNCHER
+cat > "$BIN_DIR/ship" <<'LAUNCHER'
 #!/bin/sh
 # ship --- opens the shipwright interface against the current directory.
 #
-# Only \$PWD is mounted, so the agent cannot see anything above the directory
+# Only $PWD is mounted, so the agent cannot see anything above the directory
 # you run this in. That is the containment boundary.
 set -eu
-IMAGE="\${SHIPWRIGHT_IMAGE:-$IMAGE_NAME}"
+IMAGE="${SHIPWRIGHT_IMAGE:-@IMAGE_NAME@}"
 
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
-    if id -nG 2>/dev/null | tr " " "\\n" | grep -qx docker; then
+    if id -nG 2>/dev/null | tr " " "\n" | grep -qx docker; then
         printf '  Is the daemon running?  sudo systemctl start docker\n' >&2
     else
         printf '  You are not in the docker group yet. Start a new login shell:\n\n' >&2
@@ -314,14 +314,15 @@ if ! command -v runsc >/dev/null 2>&1; then
     exit 1
 fi
 
-exec docker run --rm -it \\
-    --runtime runsc \\
-    --workdir /workspace \\
-    --mount "type=bind,source=\$(pwd),target=/workspace" \\
-    --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \\
-    --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \\
-    "\$IMAGE" ship --repo /workspace "\$@"
+exec docker run --rm -it \
+    --runtime runsc \
+    --workdir /workspace \
+    --mount "type=bind,source=$(pwd),target=/workspace" \
+    --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \
+    --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \
+    "$IMAGE" ship --repo /workspace "$@"
 LAUNCHER
+sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
 ok "ship"
 
