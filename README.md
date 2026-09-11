@@ -65,8 +65,19 @@ Then, inside any project:
 ship
 ```
 
-`ship` mounts **only the directory you run it in**. Nothing above it is visible
-to the agent — that is the containment boundary, not a heuristic.
+or point it at a directory — `.` is the one you are in, `..` its parent, and
+relative, absolute and `~` paths all work:
+
+```bash
+ship .
+ship ..
+ship ../other-project
+ship ~/code/app
+ship /srv/repos/service
+```
+
+`ship` mounts **only the directory you open**. Nothing above it is visible to
+the agent — that is the containment boundary, not a heuristic.
 
 The first run asks which provider you want, takes the key masked, verifies it
 with one real completion, and stores it in that folder's `.env` with owner-only
