@@ -306,7 +306,8 @@ die() {
 }
 
 # Take the directory out of the arguments and pass everything else through,
-# in order.
+# in order. Flags that take a value keep it, so `ship --provider openai ..`
+# does not mistake "openai" for the directory.
 TARGET=""
 remaining=$#
 while [ "$remaining" -gt 0 ]; do
@@ -324,6 +325,14 @@ while [ "$remaining" -gt 0 ]; do
             TARGET=$1
             shift
             remaining=$((remaining - 1))
+            ;;
+        --provider | --gateway)
+            set -- "$@" "$arg"
+            if [ "$remaining" -gt 0 ]; then
+                set -- "$@" "$1"
+                shift
+                remaining=$((remaining - 1))
+            fi
             ;;
         -*)
             set -- "$@" "$arg"
