@@ -344,7 +344,10 @@ while [ "$remaining" -gt 0 ]; do
     esac
 done
 
-WORKSPACE=$(cd "${TARGET:-.}" && pwd -P)
+TARGET=${TARGET:-.}
+[ -e "$TARGET" ] || die "no such directory: $TARGET"
+[ -d "$TARGET" ] || die "not a directory: $TARGET"
+WORKSPACE=$(cd "$TARGET" && pwd -P)
 
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
