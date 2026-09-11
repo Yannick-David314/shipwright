@@ -294,7 +294,8 @@ up, and the send arrow becomes a square for the duration.
 
 ```bash
 ship                                    # native Linux/WSL, on the current checkout
-ship --repo /path/to/checkout           # point it somewhere else
+ship ..                                 # the parent directory
+ship /path/to/checkout                  # point it somewhere else (--repo also works)
 shipwright --tui                        # same interface, via the main entrypoint
 docker compose exec agent ship          # against the running containerized stack
 ```
