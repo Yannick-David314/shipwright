@@ -355,6 +355,9 @@ WORKSPACE=$(cd "$TARGET" && pwd -P)
 if [ "$WORKSPACE" = "/" ]; then
     die "refusing to mount / — the agent would see the whole filesystem. Open a project directory."
 fi
+case "$WORKSPACE" in
+    *,*) die "directory paths containing a comma cannot be mounted: $WORKSPACE" ;;
+esac
 
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
