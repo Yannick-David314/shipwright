@@ -352,6 +352,10 @@ esac
 [ -d "$TARGET" ] || die "not a directory: $TARGET"
 WORKSPACE=$(cd "$TARGET" && pwd -P)
 
+if [ "$WORKSPACE" = "/" ]; then
+    die "refusing to mount / — the agent would see the whole filesystem. Open a project directory."
+fi
+
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
     if id -nG 2>/dev/null | tr " " "\n" | grep -qx docker; then
