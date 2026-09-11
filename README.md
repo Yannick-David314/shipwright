@@ -86,6 +86,7 @@ permissions. It never asks again.
 | Command | What it does |
 | ------- | ------------ |
 | `ship` | Open the interface on the current directory |
+| `ship PATH` | Open it on another directory (`.`, `..`, relative or absolute) |
 | `ship-update` | Rebuild from the latest source |
 | `ship --setup` | Change provider or API key |
 | `ship-uninstall` | Remove shipwright |
