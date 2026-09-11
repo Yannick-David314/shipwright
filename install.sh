@@ -345,6 +345,9 @@ while [ "$remaining" -gt 0 ]; do
 done
 
 TARGET=${TARGET:-.}
+case "$TARGET" in
+    "~" | "~/"*) TARGET="$HOME${TARGET#\~}" ;;
+esac
 [ -e "$TARGET" ] || die "no such directory: $TARGET"
 [ -d "$TARGET" ] || die "not a directory: $TARGET"
 WORKSPACE=$(cd "$TARGET" && pwd -P)
