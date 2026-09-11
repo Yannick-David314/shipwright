@@ -314,6 +314,17 @@ while [ "$remaining" -gt 0 ]; do
     shift
     remaining=$((remaining - 1))
     case "$arg" in
+        --repo=*)
+            [ -z "$TARGET" ] || die "give the directory once"
+            TARGET=${arg#--repo=}
+            ;;
+        --repo)
+            [ "$remaining" -gt 0 ] || die "--repo needs a directory"
+            [ -z "$TARGET" ] || die "give the directory once"
+            TARGET=$1
+            shift
+            remaining=$((remaining - 1))
+            ;;
         -*)
             set -- "$@" "$arg"
             ;;
