@@ -10,7 +10,7 @@
 #
 # There is deliberately no native install path. The agent runs arbitrary
 # commands on your behalf, so it runs inside a gVisor-isolated container or it
-# does not run at all. `ship` mounts only the directory you launch it in.
+# does not run at all. `ship` mounts only the directory you open with it.
 #
 # Environment overrides:
 #   SHIPWRIGHT_HOME  SHIPWRIGHT_BIN  SHIPWRIGHT_REPO_URL  SHIPWRIGHT_REF
