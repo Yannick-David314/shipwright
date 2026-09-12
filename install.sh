@@ -367,7 +367,13 @@ cp "$0" "$INSTALL_HOME/install.sh" 2>/dev/null || true
 
 step "Building the agent image"
 detail "this bakes the agent, sandbox policies and interface into $IMAGE_NAME"
-run $DOCKER build --quiet -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR" >/dev/null
+if $DOCKER buildx version >/dev/null 2>&1; then
+    BUILD_OUTPUT="--progress=plain"
+else
+    BUILD_OUTPUT=""
+fi
+# shellcheck disable=SC2086 # $DOCKER may be "sudo docker"; $BUILD_OUTPUT may be empty
+with_progress docker $DOCKER build $BUILD_OUTPUT -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR"
 ok "image built: $($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}')"
 
 # --- launchers ---------------------------------------------------------------
