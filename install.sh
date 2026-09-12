@@ -73,9 +73,11 @@ with_progress() {
             function draw(pct, what,    filled, bar, i) {
                 if (pct > 100) pct = 100
                 if (pct < shown) return
-                if (!tty) {
-                    # Logs: one line per quarter instead of a redrawn bar.
-                    if (pct < 100 && int(pct / 25) == int(shown / 25) && started) return
+                if (pct == shown && what == phase) return
+                if (!tty && !final) {
+                    # Logs get one line per quarter instead of a redrawn bar,
+                    # and 100% only once the command has really finished.
+                    if (pct >= 100 || (started && int(pct / 25) == int(shown / 25))) return
                 }
                 shown = pct
                 started = 1
@@ -121,6 +123,7 @@ with_progress() {
                 next
             }
             END {
+                final = 1
                 if ((getline code < status_file) > 0 && code == "0") draw(100, "done")
                 if (tty) printf "\n"
             }'
