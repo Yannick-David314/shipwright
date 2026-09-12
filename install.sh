@@ -330,7 +330,7 @@ step "Fetching the source"
 mkdir -p "$INSTALL_HOME"
 if [ -d "$SRC_DIR/.git" ]; then
     detail "updating the existing checkout"
-    run git -C "$SRC_DIR" fetch --quiet --depth 1 origin "$REF"
+    with_progress git git -C "$SRC_DIR" fetch --progress --depth 1 origin "$REF"
     run git -C "$SRC_DIR" checkout --quiet FETCH_HEAD
 else
     detail "cloning $REPO_URL ($REF)"
