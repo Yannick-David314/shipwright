@@ -51,13 +51,49 @@ run() {
     "$@"
 }
 
-# Run a long command quietly. The full output goes to a log, and its tail is
-# printed if the command fails, so hiding the noise never hides an error.
+# Run a long command behind a progress bar:
+#
+#         [=================>            ]  58%  receiving objects
+#
+# $1 says how to read progress from the output; the rest is the
+# command. The full output goes to a log, and its tail is printed if the
+# command fails, so hiding the noise never hides an error.
 with_progress() {
+    parser=$1
+    shift
     printf '        \033[2m$ %s\033[0m\n' "$*"
     progress_log=$(mktemp)
     progress_status=$(mktemp)
-    { "$@" 2>&1; echo $? > "$progress_status"; } > "$progress_log"
+    if [ -t 1 ]; then progress_tty=1; else progress_tty=0; fi
+    { "$@" 2>&1; echo $? > "$progress_status"; } \
+        | tee "$progress_log" \
+        | tr '\r' '\n' \
+        | awk -v parser="$parser" -v tty="$progress_tty" -v status_file="$progress_status" '
+            function draw(pct, what,    filled, bar, i) {
+                if (pct > 100) pct = 100
+                if (pct < shown) return
+                if (!tty) {
+                    # Logs: one line per quarter instead of a redrawn bar.
+                    if (pct < 100 && int(pct / 25) == int(shown / 25) && started) return
+                }
+                shown = pct
+                started = 1
+                if (what != "") phase = what
+                filled = int(pct * 30 / 100)
+                bar = ""
+                for (i = 0; i < filled; i++) bar = bar "="
+                if (filled < 30) bar = bar ">"
+                while (length(bar) < 30) bar = bar " "
+                printf "%s        [\033[36m%s\033[0m] %3d%%  \033[2m%-28s\033[0m%s",
+                    (tty ? "\r" : ""), bar, pct, phase, (tty ? "" : "\n")
+                fflush()
+            }
+            BEGIN { shown = -1; draw(0, "starting") ; shown = 0 }
+            END {
+                getline code < status_file
+                if (code == 0) draw(100, "done")
+                if (tty) printf "\n"
+            }'
     progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
     if [ "$progress_code" != "0" ]; then
         printf '        \033[31mfailed\033[0m (exit %s); last lines of output:\n' "$progress_code" >&2
