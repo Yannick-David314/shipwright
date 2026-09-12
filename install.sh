@@ -493,16 +493,10 @@ ok "ship-uninstall   remove shipwright"
 
 # --- done --------------------------------------------------------------------
 
-printf '\n\033[1;32mshipwright is ready\033[0m  (sandboxed with gVisor)\n\n' 
 case ":$PATH:" in
-    *":$BIN_DIR:"*) printf '  Run \033[1mship\033[0m inside any project to open it.\n' ;;
+    *":$BIN_DIR:"*) ;;
     *)
-        printf '  %s is not on your PATH yet:\n\n' "$BIN_DIR"
+        printf '\n  %s is not on your PATH yet:\n\n' "$BIN_DIR"
         printf '      echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc && exec $SHELL\n\n' "$BIN_DIR"
-        printf '  Then run \033[1mship\033[0m inside any project.\n'
         ;;
 esac
-printf '  Only the directory you launch it from is mounted.\n'
-printf '  First run asks which provider to use and for its API key.\n\n'
-printf '  \033[2mship-update\033[0m     update to the latest version\n'
-printf '  \033[2mship-uninstall\033[0m  remove it again\n'
