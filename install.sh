@@ -51,6 +51,22 @@ run() {
     "$@"
 }
 
+# Run a long command quietly. The full output goes to a log, and its tail is
+# printed if the command fails, so hiding the noise never hides an error.
+with_progress() {
+    printf '        \033[2m$ %s\033[0m\n' "$*"
+    progress_log=$(mktemp)
+    progress_status=$(mktemp)
+    { "$@" 2>&1; echo $? > "$progress_status"; } > "$progress_log"
+    progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
+    if [ "$progress_code" != "0" ]; then
+        printf '        \033[31mfailed\033[0m (exit %s); last lines of output:\n' "$progress_code" >&2
+        tail -n 20 "$progress_log" | tr '\r' '\n' | tail -n 20 | sed 's/^/          /' >&2
+    fi
+    rm -f "$progress_log" "$progress_status"
+    return "$progress_code"
+}
+
 # The node exists even with no controlling terminal, so test an actual open.
 # Done in a subshell: a redirection failure on a special builtin kills the shell.
 have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
