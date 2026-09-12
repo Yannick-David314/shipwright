@@ -55,8 +55,8 @@ run() {
 #
 #         [=================>            ]  58%  receiving objects
 #
-# $1 says how to read progress from the output ("git"); the rest is the
-# command. The full output goes to a log, and its tail is printed if the
+# $1 says how to read progress from the output ("git" or "docker"); the rest is
+# the command. The full output goes to a log, and its tail is printed if the
 # command fails, so hiding the noise never hides an error.
 with_progress() {
     parser=$1
@@ -100,6 +100,23 @@ with_progress() {
                 else if ($0 ~ /Compressing objects/) draw(5 + int(p * 5 / 100), "compressing objects")
                 else if ($0 ~ /Receiving objects/)   draw(10 + int(p * 80 / 100), "receiving objects")
                 else if ($0 ~ /Resolving deltas/)    draw(90 + int(p * 10 / 100), "resolving deltas")
+                next
+            }
+            parser == "docker" {
+                # BuildKit: "#7 [builder 2/9] RUN ..."; classic builder: "Step 2/9 : RUN ...".
+                if (match($0, /\[[^]]*[0-9]+\/[0-9]+\]/) || match($0, /Step [0-9]+\/[0-9]+/)) {
+                    token = substr($0, RSTART, RLENGTH)
+                    stage = token
+                    sub(/[0-9]+\/[0-9]+\]?$/, "", stage)
+                    match(token, /[0-9]+\/[0-9]+/)
+                    split(substr(token, RSTART, RLENGTH), nm, "/")
+                    if (!(stage in total)) { total[stage] = nm[2]; all += nm[2] }
+                    if (nm[1] - 1 > done[stage]) { finished += nm[1] - 1 - done[stage]; done[stage] = nm[1] - 1 }
+                    what = $0
+                    sub(/^.*(\]|: ) */, "", what)
+                    split(what, words, " ")
+                    draw(int(finished * 100 / all), tolower(words[1]) " " words[2])
+                }
                 next
             }
             END {
