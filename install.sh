@@ -65,7 +65,8 @@ with_progress() {
     progress_log=$(mktemp)
     progress_status=$(mktemp)
     if [ -t 1 ]; then progress_tty=1; else progress_tty=0; fi
-    { "$@" 2>&1; echo $? > "$progress_status"; } \
+    # "|| progress_rc=$?" keeps set -e from ending the group before the status is saved.
+    { progress_rc=0; "$@" 2>&1 || progress_rc=$?; echo "$progress_rc" > "$progress_status"; } \
         | tee "$progress_log" \
         | tr '\r' '\n' \
         | awk -v parser="$parser" -v tty="$progress_tty" -v status_file="$progress_status" '
@@ -120,8 +121,7 @@ with_progress() {
                 next
             }
             END {
-                getline code < status_file
-                if (code == 0) draw(100, "done")
+                if ((getline code < status_file) > 0 && code == "0") draw(100, "done")
                 if (tty) printf "\n"
             }'
     progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
