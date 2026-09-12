@@ -55,7 +55,7 @@ run() {
 #
 #         [=================>            ]  58%  receiving objects
 #
-# $1 says how to read progress from the output; the rest is the
+# $1 says how to read progress from the output ("git"); the rest is the
 # command. The full output goes to a log, and its tail is printed if the
 # command fails, so hiding the noise never hides an error.
 with_progress() {
@@ -88,7 +88,20 @@ with_progress() {
                     (tty ? "\r" : ""), bar, pct, phase, (tty ? "" : "\n")
                 fflush()
             }
+            function percent_in(line,    m) {
+                if (match(line, /[0-9]+%/)) return substr(line, RSTART, RLENGTH - 1) + 0
+                return -1
+            }
             BEGIN { shown = -1; draw(0, "starting") ; shown = 0 }
+            parser == "git" {
+                p = percent_in($0)
+                if (p < 0) next
+                if ($0 ~ /Counting objects/)         draw(int(p * 5 / 100), "counting objects")
+                else if ($0 ~ /Compressing objects/) draw(5 + int(p * 5 / 100), "compressing objects")
+                else if ($0 ~ /Receiving objects/)   draw(10 + int(p * 80 / 100), "receiving objects")
+                else if ($0 ~ /Resolving deltas/)    draw(90 + int(p * 10 / 100), "resolving deltas")
+                next
+            }
             END {
                 getline code < status_file
                 if (code == 0) draw(100, "done")
