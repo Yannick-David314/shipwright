@@ -335,8 +335,13 @@ if [ -d "$SRC_DIR/.git" ]; then
 else
     detail "cloning $REPO_URL ($REF)"
     rm -rf "$SRC_DIR"
-    git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$SRC_DIR" 2>/dev/null \
-        || git clone --quiet --depth 1 "$REPO_URL" "$SRC_DIR"
+    # A branch or tag clones directly; anything else (a commit) needs the fallback.
+    if git ls-remote --exit-code "$REPO_URL" "$REF" >/dev/null 2>&1; then
+        with_progress git git clone --progress --depth 1 --branch "$REF" "$REPO_URL" "$SRC_DIR"
+    else
+        with_progress git git clone --progress "$REPO_URL" "$SRC_DIR"
+        run git -C "$SRC_DIR" checkout --quiet "$REF"
+    fi
 fi
 ok "source at $(git -C "$SRC_DIR" rev-parse --short HEAD)"
 cp "$0" "$INSTALL_HOME/install.sh" 2>/dev/null || true
