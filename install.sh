@@ -474,7 +474,7 @@ exec docker run --rm -it \
     --mount "type=bind,source=$WORKSPACE,target=/workspace" \
     --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \
     --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \
-    "$IMAGE" ship /workspace "$@"
+    "$IMAGE" ship --repo /workspace "$@"
 LAUNCHER
 sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
