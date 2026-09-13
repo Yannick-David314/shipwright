@@ -438,7 +438,7 @@ class ShipwrightApp(App[None]):
         if self.active_loop is not None:
             switch_model(self.active_loop, argument)
         self.query_one(ContextBar).set_model(self.model_label())
-        return f"now using {provider.value}" + (f" / {model}" if model else "")
+        return f"now using {model or DEFAULT_MODELS[provider]}"
 
     def describe_models(self) -> str:
         """Lists the models available on the current provider.
@@ -451,7 +451,7 @@ class ShipwrightApp(App[None]):
             f"{'*' if name == active else ' '} {name}"
             for name in models_for(Provider(self.provider))
         ]
-        return f"{self.provider}:  " + "   ".join(names)
+        return "   ".join(names)
 
     def toggle_plan_mode(self, argument: str) -> str:
         """Turns plan-then-execute on and off for later runs.
