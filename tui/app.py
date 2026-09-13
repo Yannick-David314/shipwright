@@ -35,12 +35,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Label
+from textual.widgets import Label, Static
 
 from agent.circuit_breaker import CircuitBreaker, RunawayRunError
 from agent.cost_tracker import CostTracker
@@ -84,7 +85,6 @@ from tui.widgets.step_row import StepRow
 from tui.widgets.wordmark import Wordmark
 
 DEFAULT_GATEWAY_URL = "http://localhost:4000"
-INSTRUCTION_PREFIX = "● "
 ANSWER_PREFIX = "● "
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
@@ -154,6 +154,12 @@ class ShipwrightApp(App[None]):
     #region-timeline {
         height: 1fr;
         padding: 0 2;
+    }
+    .instruction {
+        height: auto;
+        margin-top: 1;
+        padding: 0 1;
+        border: round $accent;
     }
     #region-status {
         height: 1;
@@ -333,7 +339,8 @@ class ShipwrightApp(App[None]):
         self.active_instruction = instruction
         timeline = self.query_one(Timeline)
         timeline.start_turn(instruction)
-        timeline.mount(Label(f"{INSTRUCTION_PREFIX}{instruction}"))
+        # Text, not markup: an instruction may well contain [brackets].
+        timeline.mount(Static(Text(instruction), classes="instruction"))
         status = self.query_one(StatusLine)
         status.display = True
         status.set_phase(Phase.PLANNING)
