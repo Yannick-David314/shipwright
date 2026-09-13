@@ -233,9 +233,6 @@ fi
 detail "kernel $(uname -r)"
 command -v git >/dev/null 2>&1 || die "git is required; install it and re-run"
 ok "git: $(git --version | awk '{print $3}')"
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    detail "WSL2 detected — gVisor runs here via the systrap platform"
-fi
 detail "install prefix: $INSTALL_HOME"
 detail "launchers:      $BIN_DIR"
 
