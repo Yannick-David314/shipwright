@@ -133,16 +133,19 @@ class ShipwrightApp(App[None]):
         display: none;
     }
     #hero-mark {
-        width: auto;
+        width: 100%;
+        content-align: center middle;
         color: $accent;
     }
     #hero-robot {
         margin-bottom: 1;
-        width: auto;
+        width: 100%;
+        content-align: center middle;
         color: $accent;
     }
     #hero-tagline {
-        width: auto;
+        width: 100%;
+        content-align: center middle;
         color: $text-muted;
     }
     #region-setup {
