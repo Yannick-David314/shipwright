@@ -32,24 +32,19 @@ DOCKER="docker"
 NEEDS_RELOGIN=0
 
 # --- logging -----------------------------------------------------------------
+#
+# The log reads like apt: one plain line per thing that happens, warnings as
+# "W:" and errors as "E:", with no timestamps, glyphs or echoed commands.
 
-stamp() { date '+%H:%M:%S'; }
-step() {
-    STEP_NUMBER=$((STEP_NUMBER + 1))
-    printf '\n\033[1;36m[%d/%d]\033[0m \033[2m%s\033[0m  \033[1m%s\033[0m\n' \
-        "$STEP_NUMBER" "$TOTAL_STEPS" "$(stamp)" "$*"
-}
-detail() { printf '        \033[2m%s\033[0m %s\n' "·" "$*"; }
-ok()     { printf '        \033[32m✓\033[0m %s\n' "$*"; }
-skip()   { printf '        \033[2m—\033[0m %s\n' "$*"; }
-warn()   { printf '        \033[33m!\033[0m %s\n' "$*" >&2; }
-die()    { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+say()    { printf '%s\n' "$*"; }
+step()   { STEP_NUMBER=$((STEP_NUMBER + 1)); say "$*..."; }
+detail() { say "$*"; }
+ok()     { say "$*"; }
+skip()   { say "$*"; }
+warn()   { printf 'W: %s\n' "$*" >&2; }
+die()    { printf 'E: %s\n' "$*" >&2; exit 1; }
 
-# Run a command, echoing it first so the log shows exactly what happened.
-run() {
-    printf '        \033[2m$ %s\033[0m\n' "$*"
-    "$@"
-}
+run() { "$@"; }
 
 # Run a long command behind a progress bar:
 #
@@ -61,7 +56,6 @@ run() {
 with_progress() {
     parser=$1
     shift
-    printf '        \033[2m$ %s\033[0m\n' "$*"
     progress_log=$(mktemp)
     progress_status=$(mktemp)
     if [ -t 1 ]; then progress_tty=1; else progress_tty=0; fi
@@ -142,7 +136,7 @@ have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
 
 confirm() {
     have_tty || die "no terminal for confirmation. Download the script and run it: sh install.sh"
-    printf '        \033[1m%s\033[0m [y/N] ' "$1" > /dev/tty
+    printf '%s [y/N] ' "$1" > /dev/tty
     read -r reply < /dev/tty
     case "$reply" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
@@ -151,7 +145,6 @@ as_root() {
     if [ "$(id -u)" = "0" ]; then run "$@"; return; fi
     command -v sudo >/dev/null 2>&1 || die "sudo is required to install system packages"
     have_tty || die "sudo needs a terminal. Download the script and run it: sh install.sh"
-    printf '        \033[2m$ sudo %s\033[0m\n' "$*"
     sudo "$@" < /dev/tty
 }
 
