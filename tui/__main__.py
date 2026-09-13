@@ -53,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provider",
         choices=provider_choices(),
+        # The names are only worth listing where a provider is actually chosen.
+        metavar="PROVIDER",
         default=Provider.ANTHROPIC.value,
         help="model provider to run the loop with",
     )
