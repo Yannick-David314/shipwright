@@ -40,7 +40,7 @@ class ContextBar(Static):
 
     Attributes:
         usage: How full the working context is, between 0 and 1.
-        model_label: Provider and model currently answering.
+        model_label: Model currently answering.
         palette: Colours the bar draws from.
     """
 
@@ -48,7 +48,7 @@ class ContextBar(Static):
         """Builds the bar for one model, showing an empty context.
 
         Args:
-            model_label: Provider and model currently answering.
+            model_label: Model currently answering.
             palette: Colours to draw from; detected from the terminal when None.
         """
         super().__init__()
@@ -94,7 +94,7 @@ class ContextBar(Static):
         """Records which model is answering and repaints.
 
         Args:
-            model_label: Provider and model currently answering.
+            model_label: Model currently answering.
         """
         self.model_label = model_label
         self.update(self.render_text())

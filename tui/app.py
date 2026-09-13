@@ -22,7 +22,7 @@ Contains:
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
     ShipwrightApp.switch_provider(): points later runs at another provider or model
     ShipwrightApp.describe_models(): lists the models the provider serves
-    ShipwrightApp.model_label(): the provider and model shown under the composer
+    ShipwrightApp.model_label(): the model shown under the composer
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
     ShipwrightApp.toggle_plan_mode(): turns plan-then-execute on and off
     ShipwrightApp.approve_plan(): shows a proposed plan and waits for an answer
@@ -554,12 +554,12 @@ class ShipwrightApp(App[None]):
         return SETUP_REOPENED
 
     def model_label(self) -> str:
-        """Renders the provider and model currently answering.
+        """Renders the model currently answering.
 
         Returns:
-            label: Provider and model, as the bar under the composer shows it.
+            label: The model, as the bar under the composer shows it.
         """
-        return f"{self.provider}/{self.model or DEFAULT_MODELS[Provider(self.provider)]}"
+        return self.model or DEFAULT_MODELS[Provider(self.provider)]
 
     def refresh_context_bar(self) -> None:
         """Updates the context readout from the run currently in flight."""
