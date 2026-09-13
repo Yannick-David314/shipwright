@@ -137,6 +137,7 @@ class ShipwrightApp(App[None]):
         color: $accent;
     }
     #hero-robot {
+        margin-bottom: 1;
         width: auto;
         color: $accent;
     }
@@ -235,8 +236,8 @@ class ShipwrightApp(App[None]):
     def compose(self) -> ComposeResult:
         """Lays out the hero, the timeline, the status line, and the composer."""
         hero = Vertical(
-            Wordmark(id="hero-mark"),
             Robot(id="hero-robot"),
+            Wordmark(id="hero-mark"),
             Label(HERO_TAGLINE, id="hero-tagline"),
             id="region-hero",
         )
