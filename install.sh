@@ -194,63 +194,57 @@ as_root() {
 
 if [ "$MODE" = "uninstall" ]; then
     TOTAL_STEPS=4
-    printf '\033[1mRemoving shipwright\033[0m\n'
-
-    step "Removing launchers from $BIN_DIR"
+    step "Removing launchers"
     for launcher in ship shipwright ship-update ship-uninstall; do
         if [ -e "$BIN_DIR/$launcher" ]; then
             run rm -f "$BIN_DIR/$launcher"
-            ok "removed $launcher"
-        else
-            skip "$launcher was not installed"
+            ok "Removing $launcher"
         fi
     done
 
     step "Removing the container image"
     if command -v docker >/dev/null 2>&1 && $DOCKER image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
         run $DOCKER image rm -f "$IMAGE_NAME" >/dev/null
-        ok "removed $IMAGE_NAME"
+        ok "Removing $IMAGE_NAME"
     else
-        skip "no image to remove"
+        skip "No image to remove"
     fi
 
-    step "Removing $INSTALL_HOME"
+    step "Removing installed files"
     if [ -d "$INSTALL_HOME" ]; then
-        detail "$(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1) of files"
+        ok "Removing $INSTALL_HOME ($(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1))"
         run rm -rf "$INSTALL_HOME"
-        ok "removed the checkout and cached files"
     else
-        skip "nothing installed there"
+        skip "No installed files to remove"
     fi
 
     step "Clearing stored provider keys"
-    detail "keys live in each project's .env, not in the install"
     KEY_FILES=$(find "$HOME" -maxdepth 5 -type f -name .env \
         -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/.venv/*" 2>/dev/null \
         | while read -r envfile; do
               grep -qE '^(export )?(ANTHROPIC|OPENAI)_API_KEY=.+' "$envfile" && echo "$envfile"
           done)
     if [ -z "$KEY_FILES" ]; then
-        skip "no stored provider keys found"
+        skip "No stored provider keys found"
     else
-        echo "$KEY_FILES" | while read -r envfile; do detail "$envfile"; done
+        say "Provider keys are stored in:"
+        echo "$KEY_FILES" | while read -r envfile; do detail "  $envfile"; done
         if confirm "Remove the provider key lines from the files above?"; then
             echo "$KEY_FILES" | while read -r envfile; do
                 sed -i -E '/^(export )?(ANTHROPIC|OPENAI)_API_KEY=/d' "$envfile"
                 if grep -qE '[^[:space:]]' "$envfile"; then
-                    ok "cleared keys in $envfile"
+                    ok "Clearing keys from $envfile"
                 else
                     rm -f "$envfile"
-                    ok "removed $envfile (nothing else was in it)"
+                    ok "Removing $envfile"
                 fi
             done
         else
-            skip "left the keys in place"
+            skip "Keeping the stored keys"
         fi
     fi
 
     finish
-    printf '\n\033[32mshipwright removed.\033[0m Docker and gVisor were left installed.\n'
     exit 0
 fi
 
