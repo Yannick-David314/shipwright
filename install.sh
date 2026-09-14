@@ -34,15 +34,56 @@ NEEDS_RELOGIN=0
 # --- logging -----------------------------------------------------------------
 #
 # The log reads like apt: one plain line per thing that happens, warnings as
-# "W:" and errors as "E:", with no timestamps, glyphs or echoed commands.
+# "W:" and errors as "E:", with no timestamps, glyphs or echoed commands. On a
+# terminal the last line is a progress bar that every log line scrolls above:
+#
+#   Progress: [ 42%] [#######################...............................]
 
-say()    { printf '%s\n' "$*"; }
-step()   { STEP_NUMBER=$((STEP_NUMBER + 1)); say "$*..."; }
+if [ -t 1 ]; then SHOW_BAR=1; else SHOW_BAR=0; fi
+COLS=$(tput cols 2>/dev/null || echo 80)
+PERCENT=0
+
+# Drawing code shared by the shell and by the parser that streams build output.
+BAR_AWK='
+function bar(pct,    width, filled, cells, i) {
+    if (pct > 100) pct = 100
+    width = cols - 20
+    if (width < 10) width = 10
+    filled = int(pct * width / 100)
+    cells = ""
+    for (i = 0; i < width; i++) cells = cells (i < filled ? "#" : ".")
+    printf "\r\033[K\033[42;30mProgress: [%3d%%]\033[0m [%s]", pct, cells
+    fflush()
+}
+function unbar() { printf "\r\033[K"; fflush() }'
+
+draw_bar() {
+    [ "$SHOW_BAR" = 1 ] || return 0
+    awk -v pct="$PERCENT" -v cols="$COLS" "$BAR_AWK"' BEGIN { bar(pct) }'
+}
+clear_bar() {
+    [ "$SHOW_BAR" = 1 ] || return 0
+    printf '\r\033[K'
+}
+
+say()    { clear_bar; printf '%s\n' "$*"; draw_bar; }
+step() {
+    STEP_NUMBER=$((STEP_NUMBER + 1))
+    PERCENT=$(((STEP_NUMBER - 1) * 100 / TOTAL_STEPS))
+    say "$*..."
+}
 detail() { say "$*"; }
 ok()     { say "$*"; }
 skip()   { say "$*"; }
-warn()   { printf 'W: %s\n' "$*" >&2; }
-die()    { printf 'E: %s\n' "$*" >&2; exit 1; }
+warn()   { clear_bar; printf 'W: %s\n' "$*" >&2; draw_bar; }
+die()    { clear_bar; printf 'E: %s\n' "$*" >&2; exit 1; }
+
+# Fill the bar, then take it down: like apt, a finished run leaves only its log.
+finish() {
+    PERCENT=100
+    draw_bar
+    clear_bar
+}
 
 run() { "$@"; }
 
@@ -136,6 +177,7 @@ have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
 
 confirm() {
     have_tty || die "no terminal for confirmation. Download the script and run it: sh install.sh"
+    clear_bar
     printf '%s [y/N] ' "$1" > /dev/tty
     read -r reply < /dev/tty
     case "$reply" in [yY]*) return 0 ;; *) return 1 ;; esac
@@ -145,7 +187,9 @@ as_root() {
     if [ "$(id -u)" = "0" ]; then run "$@"; return; fi
     command -v sudo >/dev/null 2>&1 || die "sudo is required to install system packages"
     have_tty || die "sudo needs a terminal. Download the script and run it: sh install.sh"
+    clear_bar
     sudo "$@" < /dev/tty
+    draw_bar
 }
 
 # --- uninstall ---------------------------------------------------------------
@@ -207,6 +251,7 @@ if [ "$MODE" = "uninstall" ]; then
         fi
     fi
 
+    finish
     printf '\n\033[32mshipwright removed.\033[0m Docker and gVisor were left installed.\n'
     exit 0
 fi
@@ -482,6 +527,8 @@ chmod +x "$BIN_DIR/ship-uninstall"
 ok "ship-uninstall   remove shipwright"
 
 # --- done --------------------------------------------------------------------
+
+finish
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
