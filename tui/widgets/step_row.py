@@ -14,15 +14,17 @@ Contains:
     StepRow.has_failed(): whether the step reported an error
     StepRow.summary_line(): renders the collapsed one-line summary
     StepRow.card_width(): how wide the bordered card is drawn
-    StepRow.card_sections(): the IN and OUT sections the open card shows
+    StepRow.diff_lines(): the step's diff as red and green card lines
+    StepRow.card_sections(): the IN, DIFF and OUT sections the open card shows
     StepRow.highlight_color(): the colour a failed row is drawn in
     StepRow.detail_lines(): renders the output revealed when expanded
     StepRow.observation_lines(): the observation split into lines
     StepRow.is_truncated(): whether the observation is longer than the preview
     StepRow.action_show_full_output(): reveals the rest of a long observation
     NODE_MARKER: the node that starts each entry in the reasoning chain
-    INPUT_MARKER / OUTPUT_MARKER: the labels of the card's IN and OUT sections
-    StepRow.render(): draws the summary and a bordered IN/OUT card beneath it
+    INPUT_MARKER / OUTPUT_MARKER / DIFF_MARKER: labels of the card's sections
+    DIFF_PREVIEW_LINES: how much of a diff is shown before the toggle
+    StepRow.render(): draws the summary and a bordered card beneath it
     StepRow.action_toggle_step(): opens or closes the row
     StepRow.watch_is_expanded(): redraws only this row when it opens
 """
@@ -37,12 +39,16 @@ from agent.cli import _shorten
 from agent.loop import TOOL_ERROR_PREFIX
 from tui.labels import label_for
 from tui.theme import Palette, palette_for
+from tui.widgets.diff_panel import LineKind, diff_stats, parse_diff
 
 PREVIEW_LINES = 12
 MORE_OUTPUT_TEMPLATE = "… show full output ({remaining} more lines)"
 WARNING_PREFIX = "!"
 INPUT_MARKER = "IN"
 OUTPUT_MARKER = "OUT"
+DIFF_MARKER = "DIFF"
+# A rewrite of a large file should not bury the rest of the timeline.
+DIFF_PREVIEW_LINES = 40
 # The label column inside the card, wide enough for the longest label plus a gap.
 LABEL_WIDTH = 5
 MIN_CARD_WIDTH = 20
@@ -93,6 +99,7 @@ class StepRow(Static):
         tool_name: Tool the agent dispatched for this step.
         tool_args: Arguments the step was dispatched with.
         observation: Output the tool returned.
+        diff: Unified diff of what the step changed.
         is_expanded: True while the row is showing its output.
     """
 
@@ -110,6 +117,7 @@ class StepRow(Static):
         tool_args: dict[str, str],
         observation: str,
         palette: Palette | None = None,
+        diff: str = "",
     ) -> None:
         """Builds one activity row from a completed step.
 
@@ -118,12 +126,14 @@ class StepRow(Static):
             tool_args: Arguments the step was dispatched with.
             observation: Output the tool returned.
             palette: Colours to draw from; detected from the terminal when None.
+            diff: Unified diff of what this step changed, empty when it changed nothing.
         """
         super().__init__()
         self.palette: Palette = palette_for() if palette is None else palette
         self.tool_name: str = tool_name
         self.tool_args: dict[str, str] = tool_args
         self.observation: str = observation
+        self.diff: str = diff
 
     def has_failed(self) -> bool:
         """Reports whether this step's tool returned an error.
@@ -207,25 +217,62 @@ class StepRow(Static):
         """
         return self.size.width if self.size.width >= MIN_CARD_WIDTH else FALLBACK_CARD_WIDTH
 
-    def card_sections(self) -> list[tuple[str, list[str]]]:
+    def diff_lines(self) -> list[tuple[str, str]]:
+        """Renders the step's diff as coloured lines for the card.
+
+        Added lines are drawn in the palette's add colour and removed lines in
+        its delete colour, so a change reads at a glance; the +/- markers stay,
+        so it still reads on a terminal without colour.
+
+        Returns:
+            lines: (text, style) pairs, empty when the step changed nothing.
+        """
+        files = parse_diff(self.diff)
+        styles = {
+            LineKind.ADD: self.palette.add,
+            LineKind.DELETE: self.palette.delete,
+            LineKind.HUNK: self.palette.hunk,
+            LineKind.CONTEXT: self.palette.foreground,
+        }
+        lines: list[tuple[str, str]] = []
+        for changed in files:
+            added, removed = diff_stats([changed])
+            lines.append((f"{changed.path}  +{added} -{removed}", self.palette.hunk))
+            lines.extend((line.text, styles[line.kind]) for line in changed.lines if line.text)
+        if len(lines) > DIFF_PREVIEW_LINES and not self.shows_full_output:
+            remaining = len(lines) - DIFF_PREVIEW_LINES
+            hint = MORE_OUTPUT_TEMPLATE.format(remaining=remaining)
+            lines = [*lines[:DIFF_PREVIEW_LINES], (hint, self.palette.hunk)]
+        return lines
+
+    def card_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
         """Groups what the open card shows into its labelled sections.
 
         Returns:
-            sections: (label, lines) pairs; empty when the card has nothing to show.
+            sections: (label, [(text, style)]) pairs; empty when there is nothing to show.
         """
         if not self.is_expanded:
             return []
-        sections: list[tuple[str, list[str]]] = []
+        plain = self.palette.foreground
+        sections: list[tuple[str, list[tuple[str, str]]]] = []
         target = step_target(self.tool_args)
         if target:
-            sections.append((INPUT_MARKER, target.splitlines() or [target]))
+            sections.append(
+                (INPUT_MARKER, [(line, plain) for line in target.splitlines() or [target]])
+            )
+        changes = self.diff_lines()
+        if changes:
+            sections.append((DIFF_MARKER, changes))
         output = self.detail_lines()
         if output:
-            sections.append((OUTPUT_MARKER, output))
+            sections.append((OUTPUT_MARKER, [(line, plain) for line in output]))
         return sections
 
     def render(self) -> Text:
-        """Draws the summary line and, when open, a bordered IN/OUT card beneath it.
+        """Draws the summary line and, when open, a bordered card beneath it.
+
+        The card holds what the step was given, the diff of what it changed,
+        and what it returned, each in its own section.
 
         Returns:
             rendered: The row as coloured text ready for the timeline.
@@ -237,6 +284,24 @@ class StepRow(Static):
         sections = self.card_sections()
         if not sections:
             return block
+
+        inner = self.card_width() - 2
+        text_width = max(inner - LABEL_WIDTH - 2, 1)
+        block.append("\n╭" + "─" * inner + "╮", style=border)
+        for index, (label, lines) in enumerate(sections):
+            if index:
+                block.append("\n├" + "─" * inner + "┤", style=border)
+            first = True
+            for line, style in lines:
+                for chunk in chop_cells(line, text_width) or [""]:
+                    block.append("\n│ ", style=border)
+                    shown_label = label if first else ""
+                    block.append(f"{shown_label:<{LABEL_WIDTH}}", style=self.palette.hunk)
+                    block.append(chunk + " " * (text_width - cell_len(chunk)), style=style)
+                    block.append(" │", style=border)
+                    first = False
+        block.append("\n╰" + "─" * inner + "╯", style=border)
+        return block
 
         inner = self.card_width() - 2
         text_width = max(inner - LABEL_WIDTH - 2, 1)

@@ -10,6 +10,9 @@ Contains:
     test_failed_row_is_styled(): a failed row carries the error colour
     test_open_row_draws_a_bordered_card(): input and output sit in one box
     test_card_rows_line_up(): every card line is exactly as wide as the border
+    test_diff_is_drawn_inside_the_card(): the change sits between IN and OUT
+    test_added_and_removed_lines_are_green_and_red(): diff lines carry their colours
+    test_long_diff_is_previewed(): a huge diff is cut short behind the toggle
     test_row_with_no_output_draws_one_line(): a silent tool draws only a summary
 """
 
@@ -18,7 +21,13 @@ import asyncio
 from textual.app import App, ComposeResult
 
 from tui.theme import DARK
-from tui.widgets.step_row import INPUT_MARKER, OUTPUT_MARKER, StepRow
+from tui.widgets.step_row import (
+    DIFF_MARKER,
+    DIFF_PREVIEW_LINES,
+    INPUT_MARKER,
+    OUTPUT_MARKER,
+    StepRow,
+)
 
 
 class RowHarness(App[None]):
@@ -112,6 +121,61 @@ def test_card_rows_line_up() -> None:
     assert len(card) > 4
     assert len({len(line) for line in card}) == 1
     assert all(line[-1] in "╮│┤╯" for line in card)
+
+
+PATCH = (
+    "diff --git a/app/pricing.py b/app/pricing.py\n"
+    "--- a/app/pricing.py\n"
+    "+++ b/app/pricing.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " def apply_discount(price, pct):\n"
+    "-    return price * pct\n"
+    "+    if pct < 0:\n"
+    "+        raise ValueError(pct)\n"
+)
+
+
+def _edit_row(diff: str = PATCH) -> StepRow:
+    """Builds an edit step whose card carries a diff.
+
+    Args:
+        diff: Unified diff the step produced.
+
+    Returns:
+        row: The activity row under test.
+    """
+    return StepRow("edit_file", {"path": "app/pricing.py"}, "edited", palette=DARK, diff=diff)
+
+
+def test_diff_is_drawn_inside_the_card() -> None:
+    """Asserts the diff is its own card section, between the input and the output."""
+    drawn = _edit_row().render().plain
+
+    assert DIFF_MARKER in drawn
+    assert "app/pricing.py  +2 -1" in drawn
+    assert drawn.index(INPUT_MARKER) < drawn.index(DIFF_MARKER) < drawn.index(OUTPUT_MARKER)
+    assert drawn.index("╭") < drawn.index("+    if pct < 0:") < drawn.index("╯")
+
+
+def test_added_and_removed_lines_are_green_and_red() -> None:
+    """Asserts + lines take the add colour and - lines the delete colour."""
+    rendered = _edit_row().render()
+    colour_of = {
+        rendered.plain[span.start : span.end].strip(): str(span.style) for span in rendered.spans
+    }
+
+    assert colour_of["+    if pct < 0:"] == DARK.add
+    assert colour_of["-    return price * pct"] == DARK.delete
+
+
+def test_long_diff_is_previewed() -> None:
+    """Asserts a huge diff is cut to the preview until the full output is asked for."""
+    body = "".join(f"+line {n}\n" for n in range(DIFF_PREVIEW_LINES * 2))
+    row = _edit_row(f"diff --git a/big.py b/big.py\n@@ -0,0 +1 @@\n{body}")
+
+    assert "more lines" in row.render().plain
+    row.action_show_full_output()
+    assert f"+line {DIFF_PREVIEW_LINES * 2 - 1}" in row.render().plain
 
 
 def test_row_with_no_output_draws_one_line() -> None:
