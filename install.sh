@@ -155,7 +155,7 @@ with_progress() {
                 if ((getline code < status_file) <= 0 || code != "0") exit
                 advance(100)
                 srand(); elapsed = srand() - started
-                if (parser == "git") log_line("Fetched " (size != "" ? size " " : "") "in " elapsed "s")
+                if (parser == "git" && size != "") log_line("Fetched " size " in " elapsed "s")
             }' status_file="$progress_status"
     progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
     if [ "$progress_code" != "0" ]; then
