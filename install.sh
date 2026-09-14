@@ -377,11 +377,11 @@ fi
 step "Fetching the source"
 mkdir -p "$INSTALL_HOME"
 if [ -d "$SRC_DIR/.git" ]; then
-    detail "updating the existing checkout"
+    say "Get:1 $REPO_URL $REF"
     with_progress git git -C "$SRC_DIR" fetch --progress --depth 1 origin "$REF"
     run git -C "$SRC_DIR" checkout --quiet FETCH_HEAD
 else
-    detail "cloning $REPO_URL ($REF)"
+    say "Get:1 $REPO_URL $REF"
     rm -rf "$SRC_DIR"
     # A branch or tag clones directly; anything else (a commit) needs the fallback.
     if git ls-remote --exit-code "$REPO_URL" "$REF" >/dev/null 2>&1; then
@@ -391,13 +391,12 @@ else
         run git -C "$SRC_DIR" checkout --quiet "$REF"
     fi
 fi
-ok "source at $(git -C "$SRC_DIR" rev-parse --short HEAD)"
+ok "Checked out $(git -C "$SRC_DIR" rev-parse --short HEAD)"
 cp "$0" "$INSTALL_HOME/install.sh" 2>/dev/null || true
 
 # --- image -------------------------------------------------------------------
 
 step "Building the agent image"
-detail "this bakes the agent, sandbox policies and interface into $IMAGE_NAME"
 if $DOCKER buildx version >/dev/null 2>&1; then
     BUILD_OUTPUT="--progress=plain"
 else
@@ -405,7 +404,7 @@ else
 fi
 # shellcheck disable=SC2086 # $DOCKER may be "sudo docker"; $BUILD_OUTPUT may be empty
 with_progress docker $DOCKER build $BUILD_OUTPUT -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR"
-ok "image built: $($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}')"
+ok "Built $IMAGE_NAME ($($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}'))"
 
 # --- launchers ---------------------------------------------------------------
 
