@@ -4,6 +4,7 @@ __main__.py --- console entrypoint that opens the terminal interface
 
 Contains:
     build_parser(): builds the argument parser for the ship command
+    resolve_workspace(): turns a typed path into the directory to work on
     provider_choices(): the provider names the entrypoint accepts
     build_app(): builds the application from parsed arguments, loading .env first
     main(): opens the terminal interface and returns its exit status
@@ -42,10 +43,18 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open the shipwright terminal interface",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--repo", default=".", help="checkout the agent works on")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        help="directory to work on: '.', '..', a relative path, or an absolute one "
+        "(default: the current directory)",
+    )
+    parser.add_argument("--repo", help="same as PATH; kept for existing scripts")
     parser.add_argument(
         "--provider",
         choices=provider_choices(),
+        # The names are only worth listing where a provider is actually chosen.
+        metavar="PROVIDER",
         default=Provider.ANTHROPIC.value,
         help="model provider to run the loop with",
     )
@@ -62,6 +71,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_workspace(raw: str) -> Path:
+    """Turns a typed path into the absolute directory the agent will work on.
+
+    Relative paths resolve against the directory ship was started in, and a
+    leading ~ expands to the home directory, exactly as a shell would.
+
+    Args:
+        raw: Path as the operator typed it.
+
+    Returns:
+        workspace: Absolute, symlink-resolved directory.
+
+    Raises:
+        NotADirectoryError: The path does not exist or is not a directory.
+    """
+    workspace = Path(raw).expanduser().resolve()
+    if not workspace.is_dir():
+        raise NotADirectoryError(f"not a directory: {raw}")
+    return workspace
+
+
 def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     """Builds the application from parsed command-line arguments.
 
@@ -71,10 +101,17 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     Returns:
         app: Application pointed at the requested checkout.
     """
-    args: argparse.Namespace = build_parser().parse_args(argv)
-    load_env_file(Path(args.repo))
+    parser = build_parser()
+    args: argparse.Namespace = parser.parse_args(argv)
+    if args.path is not None and args.repo is not None and args.path != args.repo:
+        parser.error("give the directory once, either as PATH or with --repo")
+    try:
+        workspace = resolve_workspace(args.path or args.repo or ".")
+    except NotADirectoryError as exc:
+        parser.error(str(exc))
+    load_env_file(workspace)
     return ShipwrightApp(
-        repo_path=Path(args.repo),
+        repo_path=workspace,
         provider=args.provider,
         gateway_url=args.gateway,
         cost_tracker=CostTracker(),

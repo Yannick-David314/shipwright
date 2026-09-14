@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from agent.llm_client import DEFAULT_MODELS, Provider
 from tui.app import ShipwrightApp
 from tui.commands import USAGE_MODEL
 
@@ -71,7 +72,7 @@ def test_model_switches_the_provider(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     line = _mounted(app, lambda: app.handle_line("/model openai"))
 
-    assert "openai" in line
+    assert line == f"now using {DEFAULT_MODELS[Provider.OPENAI]}"
     assert app.provider == "openai"
 
 

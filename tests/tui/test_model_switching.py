@@ -14,7 +14,13 @@ Contains:
 
 from pathlib import Path
 
-from agent.llm_client import LLMClient, MissingCredentialError, Provider, ScriptedLLM
+from agent.llm_client import (
+    DEFAULT_MODELS,
+    LLMClient,
+    MissingCredentialError,
+    Provider,
+    ScriptedLLM,
+)
 from agent.loop import AgentConfig, AgentLoop
 from tui.commands import USAGE_MODEL, switch_model
 
@@ -55,7 +61,7 @@ def test_switch_reports_the_new_provider(tmp_path: Path) -> None:
 
     line = switch_model(_loop(tmp_path), "openai", _factory(seen))  # type: ignore[arg-type]
 
-    assert "openai" in line
+    assert line == f"now using {DEFAULT_MODELS[Provider.OPENAI]}"
     assert seen == [(Provider.OPENAI, None)]
 
 

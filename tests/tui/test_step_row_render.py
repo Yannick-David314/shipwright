@@ -8,7 +8,8 @@ Contains:
     test_collapsed_row_draws_only_its_summary(): output stays hidden
     test_expanded_row_draws_its_output(): opening reveals the observation
     test_failed_row_is_styled(): a failed row carries the error colour
-    test_output_lines_are_indented(): revealed output is indented under the row
+    test_open_row_draws_a_bordered_card(): input and output sit in one box
+    test_card_rows_line_up(): every card line is exactly as wide as the border
     test_row_with_no_output_draws_one_line(): a silent tool draws only a summary
 """
 
@@ -17,7 +18,7 @@ import asyncio
 from textual.app import App, ComposeResult
 
 from tui.theme import DARK
-from tui.widgets.step_row import CHAIN_MARKER, DETAIL_INDENT, StepRow
+from tui.widgets.step_row import INPUT_MARKER, OUTPUT_MARKER, StepRow
 
 
 class RowHarness(App[None]):
@@ -89,12 +90,28 @@ def test_failed_row_is_styled() -> None:
     assert DARK.status_error in styles
 
 
-def test_output_lines_are_indented() -> None:
-    """Asserts revealed output is indented so it reads as belonging to the row."""
-    row = StepRow("read_file", {"path": "a.py"}, "line one", palette=DARK)
+def test_open_row_draws_a_bordered_card() -> None:
+    """Asserts input and output are drawn inside one box, split by a rule."""
+    row = StepRow("run_shell", {"command": "pytest -q"}, "3 passed", palette=DARK)
 
-    assert f"\n{CHAIN_MARKER}{DETAIL_INDENT}" in row.render().plain
-    assert "line one" in row.render().plain
+    drawn = row.render().plain
+
+    assert "╭" in drawn and "╯" in drawn
+    assert "├" in drawn
+    assert f"{INPUT_MARKER}" in drawn and "pytest -q" in drawn
+    assert f"{OUTPUT_MARKER}" in drawn and "3 passed" in drawn
+    assert drawn.index("pytest -q") < drawn.index("├") < drawn.index("3 passed")
+
+
+def test_card_rows_line_up() -> None:
+    """Asserts long lines wrap inside the box instead of breaking its right edge."""
+    row = StepRow("run_shell", {"command": "x" * 300}, "y" * 250, palette=DARK)
+
+    card = row.render().plain.splitlines()[1:]
+
+    assert len(card) > 4
+    assert len({len(line) for line in card}) == 1
+    assert all(line[-1] in "╮│┤╯" for line in card)
 
 
 def test_row_with_no_output_draws_one_line() -> None:

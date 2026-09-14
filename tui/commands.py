@@ -24,13 +24,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent.circuit_breaker import CircuitBreaker
-from agent.llm_client import LLMClient, MissingCredentialError, Provider, build_client
+from agent.llm_client import (
+    DEFAULT_MODELS,
+    LLMClient,
+    MissingCredentialError,
+    Provider,
+    build_client,
+)
 from agent.loop import AgentLoop
 
 COMMAND_PREFIX = "/"
 USAGE_MAX_COST = "usage: /max-cost <positive amount in USD>"
 USAGE_MAX_STEPS = "usage: /max-steps <positive step count>"
-USAGE_MODEL = "usage: /model <anthropic|openai> [model-id]  (current provider stays if refused)"
+USAGE_MODEL = "usage: /model [model-id]"
 
 
 class UnknownCommandError(Exception):
@@ -214,4 +220,4 @@ def switch_model(
     except MissingCredentialError as exc:
         return str(exc)
     loop.set_client(client)
-    return f"now using {provider.value}" + (f" / {model}" if model else "")
+    return f"now using {model or DEFAULT_MODELS[provider]}"

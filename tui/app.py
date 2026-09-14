@@ -22,7 +22,7 @@ Contains:
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
     ShipwrightApp.switch_provider(): points later runs at another provider or model
     ShipwrightApp.describe_models(): lists the models the provider serves
-    ShipwrightApp.model_label(): the provider and model shown under the composer
+    ShipwrightApp.model_label(): the model shown under the composer
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
     ShipwrightApp.toggle_plan_mode(): turns plan-then-execute on and off
     ShipwrightApp.approve_plan(): shows a proposed plan and waits for an answer
@@ -35,12 +35,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Label
+from textual.widgets import Label, Static
 
 from agent.circuit_breaker import CircuitBreaker, RunawayRunError
 from agent.cost_tracker import CostTracker
@@ -84,7 +85,6 @@ from tui.widgets.step_row import StepRow
 from tui.widgets.wordmark import Wordmark
 
 DEFAULT_GATEWAY_URL = "http://localhost:4000"
-INSTRUCTION_PREFIX = "● "
 ANSWER_PREFIX = "● "
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
@@ -133,15 +133,19 @@ class ShipwrightApp(App[None]):
         display: none;
     }
     #hero-mark {
-        width: auto;
+        width: 100%;
+        content-align: center middle;
         color: $accent;
     }
     #hero-robot {
-        width: auto;
+        margin-bottom: 1;
+        width: 100%;
+        content-align: center middle;
         color: $accent;
     }
     #hero-tagline {
-        width: auto;
+        width: 100%;
+        content-align: center middle;
         color: $text-muted;
     }
     #region-setup {
@@ -150,6 +154,12 @@ class ShipwrightApp(App[None]):
     #region-timeline {
         height: 1fr;
         padding: 0 2;
+    }
+    .instruction {
+        height: auto;
+        margin-top: 1;
+        padding: 0 1;
+        border: round $accent;
     }
     #region-status {
         height: 1;
@@ -235,8 +245,8 @@ class ShipwrightApp(App[None]):
     def compose(self) -> ComposeResult:
         """Lays out the hero, the timeline, the status line, and the composer."""
         hero = Vertical(
-            Wordmark(id="hero-mark"),
             Robot(id="hero-robot"),
+            Wordmark(id="hero-mark"),
             Label(HERO_TAGLINE, id="hero-tagline"),
             id="region-hero",
         )
@@ -329,7 +339,8 @@ class ShipwrightApp(App[None]):
         self.active_instruction = instruction
         timeline = self.query_one(Timeline)
         timeline.start_turn(instruction)
-        timeline.mount(Label(f"{INSTRUCTION_PREFIX}{instruction}"))
+        # Text, not markup: an instruction may well contain [brackets].
+        timeline.mount(Static(Text(instruction), classes="instruction"))
         status = self.query_one(StatusLine)
         status.display = True
         status.set_phase(Phase.PLANNING)
@@ -427,7 +438,7 @@ class ShipwrightApp(App[None]):
         if self.active_loop is not None:
             switch_model(self.active_loop, argument)
         self.query_one(ContextBar).set_model(self.model_label())
-        return f"now using {provider.value}" + (f" / {model}" if model else "")
+        return f"now using {model or DEFAULT_MODELS[provider]}"
 
     def describe_models(self) -> str:
         """Lists the models available on the current provider.
@@ -440,7 +451,7 @@ class ShipwrightApp(App[None]):
             f"{'*' if name == active else ' '} {name}"
             for name in models_for(Provider(self.provider))
         ]
-        return f"{self.provider}:  " + "   ".join(names)
+        return "   ".join(names)
 
     def toggle_plan_mode(self, argument: str) -> str:
         """Turns plan-then-execute on and off for later runs.
@@ -543,12 +554,12 @@ class ShipwrightApp(App[None]):
         return SETUP_REOPENED
 
     def model_label(self) -> str:
-        """Renders the provider and model currently answering.
+        """Renders the model currently answering.
 
         Returns:
-            label: Provider and model, as the bar under the composer shows it.
+            label: The model, as the bar under the composer shows it.
         """
-        return f"{self.provider}/{self.model or DEFAULT_MODELS[Provider(self.provider)]}"
+        return self.model or DEFAULT_MODELS[Provider(self.provider)]
 
     def refresh_context_bar(self) -> None:
         """Updates the context readout from the run currently in flight."""

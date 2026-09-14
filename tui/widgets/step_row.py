@@ -13,19 +13,21 @@ Contains:
     StepRow: one activity row that opens to reveal its output
     StepRow.has_failed(): whether the step reported an error
     StepRow.summary_line(): renders the collapsed one-line summary
-    StepRow.input_line(): renders the arguments the step was dispatched with
+    StepRow.card_width(): how wide the bordered card is drawn
+    StepRow.card_sections(): the IN and OUT sections the open card shows
     StepRow.highlight_color(): the colour a failed row is drawn in
     StepRow.detail_lines(): renders the output revealed when expanded
     StepRow.observation_lines(): the observation split into lines
     StepRow.is_truncated(): whether the observation is longer than the preview
     StepRow.action_show_full_output(): reveals the rest of a long observation
-    DETAIL_INDENT: how far a revealed output line is indented
-    NODE_MARKER / CHAIN_MARKER: the reasoning chain drawn down the gutter
-    StepRow.render(): draws the summary and any revealed output
+    NODE_MARKER: the node that starts each entry in the reasoning chain
+    INPUT_MARKER / OUTPUT_MARKER: the labels of the card's IN and OUT sections
+    StepRow.render(): draws the summary and a bordered IN/OUT card beneath it
     StepRow.action_toggle_step(): opens or closes the row
     StepRow.watch_is_expanded(): redraws only this row when it opens
 """
 
+from rich.cells import cell_len, chop_cells
 from rich.text import Text
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -38,13 +40,15 @@ from tui.theme import Palette, palette_for
 
 PREVIEW_LINES = 12
 MORE_OUTPUT_TEMPLATE = "… show full output ({remaining} more lines)"
-DETAIL_INDENT = "    "
 WARNING_PREFIX = "!"
-INPUT_MARKER = "in "
-OUTPUT_MARKER = "out"
-# The reasoning chain: a node per entry, a rule joining them down the gutter.
+INPUT_MARKER = "IN"
+OUTPUT_MARKER = "OUT"
+# The label column inside the card, wide enough for the longest label plus a gap.
+LABEL_WIDTH = 5
+MIN_CARD_WIDTH = 20
+FALLBACK_CARD_WIDTH = 80
+# The reasoning chain: a node starts each entry.
 NODE_MARKER = "●"
-CHAIN_MARKER = "│"
 COLLAPSED_MARKER = "▸"
 EXPANDED_MARKER = "▾"
 # The arguments that name a step's subject, in the order they are preferred.
@@ -173,15 +177,6 @@ class StepRow(Static):
         """
         return len(self.observation_lines()) > PREVIEW_LINES
 
-    def input_line(self) -> str:
-        """Renders the arguments the step was dispatched with.
-
-        Returns:
-            line: The primary argument in full, empty when the tool took none.
-        """
-        target = step_target(self.tool_args)
-        return f"{INPUT_MARKER} {target}" if target else ""
-
     def detail_lines(self) -> list[str]:
         """Renders the output revealed when the row is expanded.
 
@@ -204,21 +199,62 @@ class StepRow(Static):
         """Reveals the rest of a long observation."""
         self.shows_full_output = True
 
+    def card_width(self) -> int:
+        """Returns how wide the bordered card is drawn.
+
+        Returns:
+            width: The row's laid-out width, or a fallback before layout.
+        """
+        return self.size.width if self.size.width >= MIN_CARD_WIDTH else FALLBACK_CARD_WIDTH
+
+    def card_sections(self) -> list[tuple[str, list[str]]]:
+        """Groups what the open card shows into its labelled sections.
+
+        Returns:
+            sections: (label, lines) pairs; empty when the card has nothing to show.
+        """
+        if not self.is_expanded:
+            return []
+        sections: list[tuple[str, list[str]]] = []
+        target = step_target(self.tool_args)
+        if target:
+            sections.append((INPUT_MARKER, target.splitlines() or [target]))
+        output = self.detail_lines()
+        if output:
+            sections.append((OUTPUT_MARKER, output))
+        return sections
+
     def render(self) -> Text:
-        """Draws the summary line and, when open, the output beneath it.
+        """Draws the summary line and, when open, a bordered IN/OUT card beneath it.
 
         Returns:
             rendered: The row as coloured text ready for the timeline.
         """
+        border = self.palette.accent
         block: Text = Text()
-        block.append(f"{NODE_MARKER} ", style=self.palette.accent)
+        block.append(f"{NODE_MARKER} ", style=border)
         block.append(self.summary_line(), style=self.highlight_color())
-        argument = self.input_line()
-        if self.is_expanded and argument:
-            block.append(f"\n{CHAIN_MARKER}{DETAIL_INDENT}{argument}")
-        for index, line in enumerate(self.detail_lines()):
-            prefix = OUTPUT_MARKER if index == 0 else "   "
-            block.append(f"\n{CHAIN_MARKER}{DETAIL_INDENT}{prefix} {line}")
+        sections = self.card_sections()
+        if not sections:
+            return block
+
+        inner = self.card_width() - 2
+        text_width = max(inner - LABEL_WIDTH - 2, 1)
+        block.append("\n╭" + "─" * inner + "╮", style=border)
+        for index, (label, lines) in enumerate(sections):
+            if index:
+                block.append("\n├" + "─" * inner + "┤", style=border)
+            first = True
+            for line in lines:
+                for chunk in chop_cells(line, text_width) or [""]:
+                    block.append("\n│ ", style=border)
+                    block.append(
+                        f"{label if first else '':<{LABEL_WIDTH}}", style=self.palette.hunk
+                    )
+                    block.append(chunk + " " * (text_width - cell_len(chunk)))
+                    block.append(" │", style=border)
+                    first = False
+        block.append("\n╰" + "─" * inner + "╯", style=border)
         return block
 
     def action_toggle_step(self) -> None:

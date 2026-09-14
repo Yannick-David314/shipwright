@@ -10,7 +10,7 @@
 #
 # There is deliberately no native install path. The agent runs arbitrary
 # commands on your behalf, so it runs inside a gVisor-isolated container or it
-# does not run at all. `ship` mounts only the directory you launch it in.
+# does not run at all. `ship` mounts only the directory you open with it.
 #
 # Environment overrides:
 #   SHIPWRIGHT_HOME  SHIPWRIGHT_BIN  SHIPWRIGHT_REPO_URL  SHIPWRIGHT_REF
@@ -32,23 +32,141 @@ DOCKER="docker"
 NEEDS_RELOGIN=0
 
 # --- logging -----------------------------------------------------------------
+#
+# The log reads like apt: one plain line per thing that happens, warnings as
+# "W:" and errors as "E:", with no timestamps, glyphs or echoed commands. On a
+# terminal the last line is a progress bar that every log line scrolls above:
+#
+#   Progress: [ 42%] [#######################...............................]
 
-stamp() { date '+%H:%M:%S'; }
+if [ -t 1 ]; then SHOW_BAR=1; else SHOW_BAR=0; fi
+COLS=$(tput cols 2>/dev/null || echo 80)
+PERCENT=0
+
+# Drawing code shared by the shell and by the parser that streams build output.
+BAR_AWK='
+function bar(pct,    width, filled, cells, i) {
+    if (pct > 100) pct = 100
+    width = cols - 20
+    if (width < 10) width = 10
+    filled = int(pct * width / 100)
+    cells = ""
+    for (i = 0; i < width; i++) cells = cells (i < filled ? "#" : ".")
+    printf "\r\033[K\033[42;30mProgress: [%3d%%]\033[0m [%s]", pct, cells
+    fflush()
+}
+function unbar() { printf "\r\033[K"; fflush() }'
+
+draw_bar() {
+    [ "$SHOW_BAR" = 1 ] || return 0
+    awk -v pct="$PERCENT" -v cols="$COLS" "$BAR_AWK"' BEGIN { bar(pct) }'
+}
+clear_bar() {
+    [ "$SHOW_BAR" = 1 ] || return 0
+    printf '\r\033[K'
+}
+
+say()    { clear_bar; printf '%s\n' "$*"; draw_bar; }
 step() {
     STEP_NUMBER=$((STEP_NUMBER + 1))
-    printf '\n\033[1;36m[%d/%d]\033[0m \033[2m%s\033[0m  \033[1m%s\033[0m\n' \
-        "$STEP_NUMBER" "$TOTAL_STEPS" "$(stamp)" "$*"
+    PERCENT=$(((STEP_NUMBER - 1) * 100 / TOTAL_STEPS))
+    say "$*..."
 }
-detail() { printf '        \033[2m%s\033[0m %s\n' "·" "$*"; }
-ok()     { printf '        \033[32m✓\033[0m %s\n' "$*"; }
-skip()   { printf '        \033[2m—\033[0m %s\n' "$*"; }
-warn()   { printf '        \033[33m!\033[0m %s\n' "$*" >&2; }
-die()    { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+detail() { say "$*"; }
+ok()     { say "$*"; }
+skip()   { say "$*"; }
+warn()   { clear_bar; printf 'W: %s\n' "$*" >&2; draw_bar; }
+die()    { clear_bar; printf 'E: %s\n' "$*" >&2; exit 1; }
 
-# Run a command, echoing it first so the log shows exactly what happened.
-run() {
-    printf '        \033[2m$ %s\033[0m\n' "$*"
-    "$@"
+# Fill the bar, then take it down: like apt, a finished run leaves only its log.
+finish() {
+    PERCENT=100
+    draw_bar
+    clear_bar
+}
+
+run() { "$@"; }
+
+# Run a long command and turn its output into log lines and bar movement.
+#
+# $1 says how to read the output ("git" or "docker"); the rest is the command.
+# The command's share of the bar is the current step, so a clone moves the bar
+# from 57% towards 71% instead of restarting a bar of its own. Everything the
+# command printed goes to a log whose tail is shown if it fails, so hiding the
+# noise never hides an error.
+with_progress() {
+    parser=$1
+    shift
+    progress_log=$(mktemp)
+    progress_status=$(mktemp)
+    # "|| progress_rc=$?" keeps set -e from ending the group before the status is saved.
+    { progress_rc=0; "$@" 2>&1 || progress_rc=$?; echo "$progress_rc" > "$progress_status"; } \
+        | tee "$progress_log" \
+        | tr '\r' '\n' \
+        | awk -v parser="$parser" -v show="$SHOW_BAR" -v cols="$COLS" \
+              -v base="$PERCENT" -v span="$((100 / TOTAL_STEPS))" "$BAR_AWK"'
+            function log_line(text) {
+                if (show) unbar()
+                if (length(text) > cols - 1) text = substr(text, 1, cols - 2) "…"
+                print text
+                if (show) bar(current)
+                fflush()
+            }
+            function advance(pct) {
+                pct = base + int(pct * span / 100)
+                if (pct <= current) return
+                current = pct
+                if (show) bar(current)
+            }
+            function percent_in(line) {
+                if (match(line, /[0-9]+%/)) return substr(line, RSTART, RLENGTH - 1) + 0
+                return -1
+            }
+            BEGIN { current = base; srand(); started = srand() }
+            parser == "git" {
+                if (match($0, /[0-9.]+ [KMG]?i?B/) && $0 ~ /Receiving objects/) size = substr($0, RSTART, RLENGTH)
+                p = percent_in($0)
+                if (p < 0) next
+                if ($0 ~ /Counting objects/)         advance(int(p * 5 / 100))
+                else if ($0 ~ /Compressing objects/) advance(5 + int(p * 5 / 100))
+                else if ($0 ~ /Receiving objects/)   advance(10 + int(p * 80 / 100))
+                else if ($0 ~ /Resolving deltas/)    advance(90 + int(p * 10 / 100))
+                next
+            }
+            parser == "docker" {
+                # BuildKit: "#7 [builder 2/9] RUN ..."; classic builder: "Step 2/9 : RUN ...".
+                if (!match($0, /\[[^]]*[0-9]+\/[0-9]+\]/) && !match($0, /Step [0-9]+\/[0-9]+/)) next
+                token = substr($0, RSTART, RLENGTH)
+                if (token in seen) next
+                seen[token] = 1
+                stage = token
+                sub(/[0-9]+\/[0-9]+\]?$/, "", stage)
+                match(token, /[0-9]+\/[0-9]+/)
+                split(substr(token, RSTART, RLENGTH), nm, "/")
+                if (!(stage in total)) { total[stage] = nm[2]; all += nm[2] }
+                if (nm[1] - 1 > done[stage]) { finished += nm[1] - 1 - done[stage]; done[stage] = nm[1] - 1 }
+                what = $0
+                sub(/^.*(\]|: ) */, "", what)
+                log_line("Step " nm[1] "/" nm[2] ": " what)
+                advance(int(finished * 100 / all))
+                next
+            }
+            END {
+                if ((getline code < status_file) <= 0 || code != "0") exit
+                advance(100)
+                srand(); elapsed = srand() - started
+                if (parser == "git" && size != "") log_line("Fetched " size " in " elapsed "s")
+            }' status_file="$progress_status"
+    progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
+    if [ "$progress_code" != "0" ]; then
+        clear_bar
+        printf 'E: %s exited with status %s; last lines of its output:\n' "$1" "$progress_code" >&2
+        tail -n 20 "$progress_log" | tr '\r' '\n' | tail -n 20 | sed 's/^/  /' >&2
+    else
+        PERCENT=$((PERCENT + 100 / TOTAL_STEPS))
+    fi
+    rm -f "$progress_log" "$progress_status"
+    return "$progress_code"
 }
 
 # The node exists even with no controlling terminal, so test an actual open.
@@ -57,7 +175,8 @@ have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
 
 confirm() {
     have_tty || die "no terminal for confirmation. Download the script and run it: sh install.sh"
-    printf '        \033[1m%s\033[0m [y/N] ' "$1" > /dev/tty
+    clear_bar
+    printf '%s [y/N] ' "$1" > /dev/tty
     read -r reply < /dev/tty
     case "$reply" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
@@ -66,93 +185,82 @@ as_root() {
     if [ "$(id -u)" = "0" ]; then run "$@"; return; fi
     command -v sudo >/dev/null 2>&1 || die "sudo is required to install system packages"
     have_tty || die "sudo needs a terminal. Download the script and run it: sh install.sh"
-    printf '        \033[2m$ sudo %s\033[0m\n' "$*"
+    clear_bar
     sudo "$@" < /dev/tty
+    draw_bar
 }
 
 # --- uninstall ---------------------------------------------------------------
 
 if [ "$MODE" = "uninstall" ]; then
     TOTAL_STEPS=4
-    printf '\033[1mRemoving shipwright\033[0m\n'
-
-    step "Removing launchers from $BIN_DIR"
+    step "Removing launchers"
     for launcher in ship shipwright ship-update ship-uninstall; do
         if [ -e "$BIN_DIR/$launcher" ]; then
             run rm -f "$BIN_DIR/$launcher"
-            ok "removed $launcher"
-        else
-            skip "$launcher was not installed"
+            ok "Removing $launcher"
         fi
     done
 
     step "Removing the container image"
     if command -v docker >/dev/null 2>&1 && $DOCKER image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
         run $DOCKER image rm -f "$IMAGE_NAME" >/dev/null
-        ok "removed $IMAGE_NAME"
+        ok "Removing $IMAGE_NAME"
     else
-        skip "no image to remove"
+        skip "No image to remove"
     fi
 
-    step "Removing $INSTALL_HOME"
+    step "Removing installed files"
     if [ -d "$INSTALL_HOME" ]; then
-        detail "$(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1) of files"
+        ok "Removing $INSTALL_HOME ($(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1))"
         run rm -rf "$INSTALL_HOME"
-        ok "removed the checkout and cached files"
     else
-        skip "nothing installed there"
+        skip "No installed files to remove"
     fi
 
     step "Clearing stored provider keys"
-    detail "keys live in each project's .env, not in the install"
     KEY_FILES=$(find "$HOME" -maxdepth 5 -type f -name .env \
         -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/.venv/*" 2>/dev/null \
         | while read -r envfile; do
               grep -qE '^(export )?(ANTHROPIC|OPENAI)_API_KEY=.+' "$envfile" && echo "$envfile"
           done)
     if [ -z "$KEY_FILES" ]; then
-        skip "no stored provider keys found"
+        skip "No stored provider keys found"
     else
-        echo "$KEY_FILES" | while read -r envfile; do detail "$envfile"; done
+        say "Provider keys are stored in:"
+        echo "$KEY_FILES" | while read -r envfile; do detail "  $envfile"; done
         if confirm "Remove the provider key lines from the files above?"; then
             echo "$KEY_FILES" | while read -r envfile; do
                 sed -i -E '/^(export )?(ANTHROPIC|OPENAI)_API_KEY=/d' "$envfile"
                 if grep -qE '[^[:space:]]' "$envfile"; then
-                    ok "cleared keys in $envfile"
+                    ok "Clearing keys from $envfile"
                 else
                     rm -f "$envfile"
-                    ok "removed $envfile (nothing else was in it)"
+                    ok "Removing $envfile"
                 fi
             done
         else
-            skip "left the keys in place"
+            skip "Keeping the stored keys"
         fi
     fi
 
-    printf '\n\033[32mshipwright removed.\033[0m Docker and gVisor were left installed.\n'
+    finish
     exit 0
 fi
 
 # --- preflight ---------------------------------------------------------------
 
-printf '\033[1mshipwright %s\033[0m\n' "$MODE"
-
 step "Checking prerequisites"
 [ "$(uname -s)" = "Linux" ] || die "the sandbox requires Linux; found $(uname -s)"
 if [ -r /etc/os-release ]; then
     . /etc/os-release
-    ok "linux: ${NAME:-unknown} ${VERSION_ID:-}"
+    ok "Found ${NAME:-Linux} ${VERSION_ID:-}"
 else
-    ok "linux: $(uname -sr)"
+    ok "Found $(uname -sr)"
 fi
-detail "kernel $(uname -r)"
+detail "Found kernel $(uname -r)"
 command -v git >/dev/null 2>&1 || die "git is required; install it and re-run"
-ok "git: $(git --version | awk '{print $3}')"
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    detail "WSL2 detected — gVisor runs here via the systrap platform"
-fi
-detail "install prefix: $INSTALL_HOME"
-detail "launchers:      $BIN_DIR"
+ok "Found git $(git --version | awk '{print $3}')"
 
 # --- docker ------------------------------------------------------------------
 
@@ -172,20 +280,20 @@ if ! command -v docker >/dev/null 2>&1; then
 
   Then:  sh $0"
 fi
-ok "docker: $(docker --version | sed 's/Docker version //; s/,.*//')"
+ok "Found docker $(docker --version | sed 's/Docker version //; s/,.*//')"
 
 if docker info >/dev/null 2>&1; then
-    ok "daemon reachable"
+    ok "Docker daemon is reachable"
 elif sudo docker info >/dev/null 2>&1; then
     # The daemon is up; this user just is not allowed to talk to its socket.
-    detail "daemon is running, but $USER cannot reach $(ls -l /var/run/docker.sock 2>/dev/null | awk '{print $3":"$4}')"
+    detail "Docker daemon is running, but $USER cannot use its socket"
     as_root usermod -aG docker "$USER"
-    ok "added $USER to the docker group"
-    detail "group membership only applies to new logins, so this install uses sudo"
+    ok "Added $USER to the docker group"
+    detail "Using sudo for docker until the next login"
     DOCKER="sudo docker"
     NEEDS_RELOGIN=1
 else
-    detail "daemon is not running; starting it"
+    detail "Starting the Docker daemon"
     if [ -d /run/systemd/system ]; then
         as_root systemctl enable --now docker || true
     else
@@ -193,10 +301,10 @@ else
     fi
     sleep 2
     if docker info >/dev/null 2>&1; then
-        ok "daemon started"
+        ok "Docker daemon started"
     elif sudo docker info >/dev/null 2>&1; then
         as_root usermod -aG docker "$USER"
-        ok "daemon started; added $USER to the docker group"
+        ok "Docker daemon started; added $USER to the docker group"
         DOCKER="sudo docker"
         NEEDS_RELOGIN=1
     else
@@ -227,11 +335,11 @@ if ! command -v runsc >/dev/null 2>&1; then
 
         sudo runsc install && sudo systemctl restart docker"
 fi
-ok "runsc: $(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')"
+ok "Found runsc $(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')"
 
 if $DOCKER info --format '{{range printf \"%s\" .Runtimes}}{{.}}{{end}}' 2>/dev/null | grep -q runsc \
     || $DOCKER info 2>/dev/null | grep -q runsc; then
-    ok "registered as a Docker runtime"
+    ok "runsc is registered with Docker"
 else
     die "runsc is installed but Docker does not know about it.
 
@@ -242,10 +350,9 @@ fi
 
 # --- sandbox probe -----------------------------------------------------------
 
-step "Proving the sandbox actually starts"
-detail "launching a throwaway container under runsc"
+step "Starting a test container under gVisor"
 if $DOCKER run --rm --runtime=runsc hello-world >/dev/null 2>&1; then
-    ok "gVisor sandbox verified"
+    ok "gVisor sandbox works"
 else
     die "gVisor is registered but could not actually start a container.
 
@@ -264,42 +371,114 @@ fi
 step "Fetching the source"
 mkdir -p "$INSTALL_HOME"
 if [ -d "$SRC_DIR/.git" ]; then
-    detail "updating the existing checkout"
-    run git -C "$SRC_DIR" fetch --quiet --depth 1 origin "$REF"
+    say "Get:1 $REPO_URL $REF"
+    with_progress git git -C "$SRC_DIR" fetch --progress --depth 1 origin "$REF"
     run git -C "$SRC_DIR" checkout --quiet FETCH_HEAD
 else
-    detail "cloning $REPO_URL ($REF)"
+    say "Get:1 $REPO_URL $REF"
     rm -rf "$SRC_DIR"
-    git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$SRC_DIR" 2>/dev/null \
-        || git clone --quiet --depth 1 "$REPO_URL" "$SRC_DIR"
+    # A branch or tag clones directly; anything else (a commit) needs the fallback.
+    if git ls-remote --exit-code "$REPO_URL" "$REF" >/dev/null 2>&1; then
+        with_progress git git clone --progress --depth 1 --branch "$REF" "$REPO_URL" "$SRC_DIR"
+    else
+        with_progress git git clone --progress "$REPO_URL" "$SRC_DIR"
+        run git -C "$SRC_DIR" checkout --quiet "$REF"
+    fi
 fi
-ok "source at $(git -C "$SRC_DIR" rev-parse --short HEAD)"
+ok "Checked out $(git -C "$SRC_DIR" rev-parse --short HEAD)"
 cp "$0" "$INSTALL_HOME/install.sh" 2>/dev/null || true
 
 # --- image -------------------------------------------------------------------
 
 step "Building the agent image"
-detail "this bakes the agent, sandbox policies and interface into $IMAGE_NAME"
-run $DOCKER build --quiet -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR" >/dev/null
-ok "image built: $($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}')"
+if $DOCKER buildx version >/dev/null 2>&1; then
+    BUILD_OUTPUT="--progress=plain"
+else
+    BUILD_OUTPUT=""
+fi
+# shellcheck disable=SC2086 # $DOCKER may be "sudo docker"; $BUILD_OUTPUT may be empty
+with_progress docker $DOCKER build $BUILD_OUTPUT -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR"
+ok "Built $IMAGE_NAME ($($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}'))"
 
 # --- launchers ---------------------------------------------------------------
 
 step "Installing launchers"
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/ship" <<LAUNCHER
+cat > "$BIN_DIR/ship" <<'LAUNCHER'
 #!/bin/sh
-# ship --- opens the shipwright interface against the current directory.
+# ship --- opens the shipwright interface on a directory.
 #
-# Only \$PWD is mounted, so the agent cannot see anything above the directory
-# you run this in. That is the containment boundary.
+# Usage: ship [PATH] [options]
+#
+#   PATH is '.', '..', a relative path, or an absolute one, and defaults to the
+#   current directory. Only that directory is mounted, so the agent cannot see
+#   anything above it. That is the containment boundary.
 set -eu
-IMAGE="\${SHIPWRIGHT_IMAGE:-$IMAGE_NAME}"
+IMAGE="${SHIPWRIGHT_IMAGE:-@IMAGE_NAME@}"
+
+die() {
+    printf '\033[31merror:\033[0m %s\n' "$*" >&2
+    exit 1
+}
+
+# Take the directory out of the arguments and pass everything else through,
+# in order. Flags that take a value keep it, so `ship --provider openai ..`
+# does not mistake "openai" for the directory.
+TARGET=""
+remaining=$#
+while [ "$remaining" -gt 0 ]; do
+    arg=$1
+    shift
+    remaining=$((remaining - 1))
+    case "$arg" in
+        --repo=*)
+            [ -z "$TARGET" ] || die "give the directory once"
+            TARGET=${arg#--repo=}
+            ;;
+        --repo)
+            [ "$remaining" -gt 0 ] || die "--repo needs a directory"
+            [ -z "$TARGET" ] || die "give the directory once"
+            TARGET=$1
+            shift
+            remaining=$((remaining - 1))
+            ;;
+        --provider | --gateway)
+            set -- "$@" "$arg"
+            if [ "$remaining" -gt 0 ]; then
+                set -- "$@" "$1"
+                shift
+                remaining=$((remaining - 1))
+            fi
+            ;;
+        -*)
+            set -- "$@" "$arg"
+            ;;
+        *)
+            [ -z "$TARGET" ] || die "give one directory, not both '$TARGET' and '$arg'"
+            TARGET=$arg
+            ;;
+    esac
+done
+
+TARGET=${TARGET:-.}
+case "$TARGET" in
+    "~" | "~/"*) TARGET="$HOME${TARGET#\~}" ;;
+esac
+[ -e "$TARGET" ] || die "no such directory: $TARGET"
+[ -d "$TARGET" ] || die "not a directory: $TARGET"
+WORKSPACE=$(cd "$TARGET" && pwd -P)
+
+if [ "$WORKSPACE" = "/" ]; then
+    die "refusing to mount / — the agent would see the whole filesystem. Open a project directory."
+fi
+case "$WORKSPACE" in
+    *,*) die "directory paths containing a comma cannot be mounted: $WORKSPACE" ;;
+esac
 
 if ! docker info >/dev/null 2>&1; then
     printf '\033[31merror:\033[0m cannot reach Docker.\n' >&2
-    if id -nG 2>/dev/null | tr " " "\\n" | grep -qx docker; then
+    if id -nG 2>/dev/null | tr " " "\n" | grep -qx docker; then
         printf '  Is the daemon running?  sudo systemctl start docker\n' >&2
     else
         printf '  You are not in the docker group yet. Start a new login shell:\n\n' >&2
@@ -310,41 +489,37 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if ! command -v runsc >/dev/null 2>&1; then
-    printf '\033[31merror:\033[0m gVisor (runsc) is not installed; shipwright will not run without it.\n' >&2
-    exit 1
+    die "gVisor (runsc) is not installed; shipwright will not run without it."
 fi
 
-exec docker run --rm -it \\
-    --runtime runsc \\
-    --workdir /workspace \\
-    --mount "type=bind,source=\$(pwd),target=/workspace" \\
-    --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \\
-    --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \\
-    "\$IMAGE" ship --repo /workspace "\$@"
+exec docker run --rm -it \
+    --runtime runsc \
+    --workdir /workspace \
+    --mount "type=bind,source=$WORKSPACE,target=/workspace" \
+    --env ANTHROPIC_API_KEY --env OPENAI_API_KEY \
+    --env SHIPWRIGHT_PROVIDER --env SHIPWRIGHT_MODEL \
+    "$IMAGE" ship --repo /workspace "$@"
 LAUNCHER
+sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
-ok "ship"
+ok "Setting up ship"
 
 printf '#!/bin/sh\nexec sh "%s/install.sh" update\n' "$INSTALL_HOME" > "$BIN_DIR/ship-update"
 chmod +x "$BIN_DIR/ship-update"
-ok "ship-update      rebuild from the latest source"
+ok "Setting up ship-update"
 
 printf '#!/bin/sh\nexec sh "%s/install.sh" uninstall\n' "$INSTALL_HOME" > "$BIN_DIR/ship-uninstall"
 chmod +x "$BIN_DIR/ship-uninstall"
-ok "ship-uninstall   remove shipwright"
+ok "Setting up ship-uninstall"
 
 # --- done --------------------------------------------------------------------
 
-printf '\n\033[1;32mshipwright is ready\033[0m  (sandboxed with gVisor)\n\n' 
+finish
+
 case ":$PATH:" in
-    *":$BIN_DIR:"*) printf '  Run \033[1mship\033[0m inside any project to open it.\n' ;;
+    *":$BIN_DIR:"*) ;;
     *)
-        printf '  %s is not on your PATH yet:\n\n' "$BIN_DIR"
-        printf '      echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc && exec $SHELL\n\n' "$BIN_DIR"
-        printf '  Then run \033[1mship\033[0m inside any project.\n'
+        warn "$BIN_DIR is not on your PATH. Add it with:"
+        printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc && exec $SHELL\n' "$BIN_DIR" >&2
         ;;
 esac
-printf '  Only the directory you launch it from is mounted.\n'
-printf '  First run asks which provider to use and for its API key.\n\n'
-printf '  \033[2mship-update\033[0m     update to the latest version\n'
-printf '  \033[2mship-uninstall\033[0m  remove it again\n'

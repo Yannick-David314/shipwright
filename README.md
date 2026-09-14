@@ -65,8 +65,19 @@ Then, inside any project:
 ship
 ```
 
-`ship` mounts **only the directory you run it in**. Nothing above it is visible
-to the agent — that is the containment boundary, not a heuristic.
+or point it at a directory — `.` is the one you are in, `..` its parent, and
+relative, absolute and `~` paths all work:
+
+```bash
+ship .
+ship ..
+ship ../other-project
+ship ~/code/app
+ship /srv/repos/service
+```
+
+`ship` mounts **only the directory you open**. Nothing above it is visible to
+the agent — that is the containment boundary, not a heuristic.
 
 The first run asks which provider you want, takes the key masked, verifies it
 with one real completion, and stores it in that folder's `.env` with owner-only
@@ -75,6 +86,7 @@ permissions. It never asks again.
 | Command | What it does |
 | ------- | ------------ |
 | `ship` | Open the interface on the current directory |
+| `ship PATH` | Open it on another directory (`.`, `..`, relative or absolute) |
 | `ship-update` | Rebuild from the latest source |
 | `ship --setup` | Change provider or API key |
 | `ship-uninstall` | Remove shipwright |
@@ -282,7 +294,8 @@ up, and the send arrow becomes a square for the duration.
 
 ```bash
 ship                                    # native Linux/WSL, on the current checkout
-ship --repo /path/to/checkout           # point it somewhere else
+ship ..                                 # the parent directory
+ship /path/to/checkout                  # point it somewhere else (--repo also works)
 shipwright --tui                        # same interface, via the main entrypoint
 docker compose exec agent ship          # against the running containerized stack
 ```
