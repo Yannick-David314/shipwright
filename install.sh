@@ -508,15 +508,15 @@ exec docker run --rm -it \
 LAUNCHER
 sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
-ok "ship"
+ok "Setting up ship"
 
 printf '#!/bin/sh\nexec sh "%s/install.sh" update\n' "$INSTALL_HOME" > "$BIN_DIR/ship-update"
 chmod +x "$BIN_DIR/ship-update"
-ok "ship-update      rebuild from the latest source"
+ok "Setting up ship-update"
 
 printf '#!/bin/sh\nexec sh "%s/install.sh" uninstall\n' "$INSTALL_HOME" > "$BIN_DIR/ship-uninstall"
 chmod +x "$BIN_DIR/ship-uninstall"
-ok "ship-uninstall   remove shipwright"
+ok "Setting up ship-uninstall"
 
 # --- done --------------------------------------------------------------------
 
@@ -525,7 +525,7 @@ finish
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *)
-        printf '\n  %s is not on your PATH yet:\n\n' "$BIN_DIR"
-        printf '      echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc && exec $SHELL\n\n' "$BIN_DIR"
+        warn "$BIN_DIR is not on your PATH. Add it with:"
+        printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc && exec $SHELL\n' "$BIN_DIR" >&2
         ;;
 esac
