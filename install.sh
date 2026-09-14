@@ -256,21 +256,17 @@ fi
 
 # --- preflight ---------------------------------------------------------------
 
-printf '\033[1mshipwright %s\033[0m\n' "$MODE"
-
 step "Checking prerequisites"
 [ "$(uname -s)" = "Linux" ] || die "the sandbox requires Linux; found $(uname -s)"
 if [ -r /etc/os-release ]; then
     . /etc/os-release
-    ok "linux: ${NAME:-unknown} ${VERSION_ID:-}"
+    ok "Found ${NAME:-Linux} ${VERSION_ID:-}"
 else
-    ok "linux: $(uname -sr)"
+    ok "Found $(uname -sr)"
 fi
-detail "kernel $(uname -r)"
+detail "Found kernel $(uname -r)"
 command -v git >/dev/null 2>&1 || die "git is required; install it and re-run"
-ok "git: $(git --version | awk '{print $3}')"
-detail "install prefix: $INSTALL_HOME"
-detail "launchers:      $BIN_DIR"
+ok "Found git $(git --version | awk '{print $3}')"
 
 # --- docker ------------------------------------------------------------------
 
