@@ -286,20 +286,20 @@ if ! command -v docker >/dev/null 2>&1; then
 
   Then:  sh $0"
 fi
-ok "docker: $(docker --version | sed 's/Docker version //; s/,.*//')"
+ok "Found docker $(docker --version | sed 's/Docker version //; s/,.*//')"
 
 if docker info >/dev/null 2>&1; then
-    ok "daemon reachable"
+    ok "Docker daemon is reachable"
 elif sudo docker info >/dev/null 2>&1; then
     # The daemon is up; this user just is not allowed to talk to its socket.
-    detail "daemon is running, but $USER cannot reach $(ls -l /var/run/docker.sock 2>/dev/null | awk '{print $3":"$4}')"
+    detail "Docker daemon is running, but $USER cannot use its socket"
     as_root usermod -aG docker "$USER"
-    ok "added $USER to the docker group"
-    detail "group membership only applies to new logins, so this install uses sudo"
+    ok "Added $USER to the docker group"
+    detail "Using sudo for docker until the next login"
     DOCKER="sudo docker"
     NEEDS_RELOGIN=1
 else
-    detail "daemon is not running; starting it"
+    detail "Starting the Docker daemon"
     if [ -d /run/systemd/system ]; then
         as_root systemctl enable --now docker || true
     else
@@ -307,10 +307,10 @@ else
     fi
     sleep 2
     if docker info >/dev/null 2>&1; then
-        ok "daemon started"
+        ok "Docker daemon started"
     elif sudo docker info >/dev/null 2>&1; then
         as_root usermod -aG docker "$USER"
-        ok "daemon started; added $USER to the docker group"
+        ok "Docker daemon started; added $USER to the docker group"
         DOCKER="sudo docker"
         NEEDS_RELOGIN=1
     else
@@ -341,11 +341,11 @@ if ! command -v runsc >/dev/null 2>&1; then
 
         sudo runsc install && sudo systemctl restart docker"
 fi
-ok "runsc: $(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')"
+ok "Found runsc $(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')"
 
 if $DOCKER info --format '{{range printf \"%s\" .Runtimes}}{{.}}{{end}}' 2>/dev/null | grep -q runsc \
     || $DOCKER info 2>/dev/null | grep -q runsc; then
-    ok "registered as a Docker runtime"
+    ok "runsc is registered with Docker"
 else
     die "runsc is installed but Docker does not know about it.
 
@@ -356,10 +356,9 @@ fi
 
 # --- sandbox probe -----------------------------------------------------------
 
-step "Proving the sandbox actually starts"
-detail "launching a throwaway container under runsc"
+step "Starting a test container under gVisor"
 if $DOCKER run --rm --runtime=runsc hello-world >/dev/null 2>&1; then
-    ok "gVisor sandbox verified"
+    ok "gVisor sandbox works"
 else
     die "gVisor is registered but could not actually start a container.
 
