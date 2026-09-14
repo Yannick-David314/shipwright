@@ -72,7 +72,6 @@ from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
 from tui.transcript import resume
 from tui.widgets.context_bar import ContextBar
-from tui.widgets.diff_panel import DiffPanel
 from tui.widgets.plan_panel import PlanPanel
 from tui.widgets.robot import Phase, Robot, StatusLine, phase_for_tool
 from tui.widgets.setup_panel import (
@@ -576,11 +575,15 @@ class ShipwrightApp(App[None]):
         """
         timeline = self.query_one(Timeline)
         self.query_one(StatusLine).set_phase(phase_for_tool(step.tool_name))
-        row = StepRow(step.tool_name, step.tool_args, step.observation, palette=self.palette)
+        row = StepRow(
+            step.tool_name,
+            step.tool_args,
+            step.observation,
+            palette=self.palette,
+            diff=step.diff,
+        )
         timeline.record_step(row)
         timeline.mount(row)
-        if step.diff:
-            timeline.mount(DiffPanel(step.diff, palette=self.palette))
         timeline.scroll_end(animate=False)
         self.refresh_context_bar()
 
