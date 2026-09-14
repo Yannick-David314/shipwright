@@ -87,85 +87,83 @@ finish() {
 
 run() { "$@"; }
 
-# Run a long command behind a progress bar:
+# Run a long command and turn its output into log lines and bar movement.
 #
-#         [=================>            ]  58%  receiving objects
-#
-# $1 says how to read progress from the output ("git" or "docker"); the rest is
-# the command. The full output goes to a log, and its tail is printed if the
-# command fails, so hiding the noise never hides an error.
+# $1 says how to read the output ("git" or "docker"); the rest is the command.
+# The command's share of the bar is the current step, so a clone moves the bar
+# from 57% towards 71% instead of restarting a bar of its own. Everything the
+# command printed goes to a log whose tail is shown if it fails, so hiding the
+# noise never hides an error.
 with_progress() {
     parser=$1
     shift
     progress_log=$(mktemp)
     progress_status=$(mktemp)
-    if [ -t 1 ]; then progress_tty=1; else progress_tty=0; fi
     # "|| progress_rc=$?" keeps set -e from ending the group before the status is saved.
     { progress_rc=0; "$@" 2>&1 || progress_rc=$?; echo "$progress_rc" > "$progress_status"; } \
         | tee "$progress_log" \
         | tr '\r' '\n' \
-        | awk -v parser="$parser" -v tty="$progress_tty" -v status_file="$progress_status" '
-            function draw(pct, what,    filled, bar, i) {
-                if (pct > 100) pct = 100
-                if (pct < shown) return
-                if (pct == shown && what == phase) return
-                if (!tty && !final) {
-                    # Logs get one line per quarter instead of a redrawn bar,
-                    # and 100% only once the command has really finished.
-                    if (pct >= 100 || (started && int(pct / 25) == int(shown / 25))) return
-                }
-                shown = pct
-                started = 1
-                if (what != "") phase = what
-                filled = int(pct * 30 / 100)
-                bar = ""
-                for (i = 0; i < filled; i++) bar = bar "="
-                if (filled < 30) bar = bar ">"
-                while (length(bar) < 30) bar = bar " "
-                printf "%s        [\033[36m%s\033[0m] %3d%%  \033[2m%-28s\033[0m%s",
-                    (tty ? "\r" : ""), bar, pct, phase, (tty ? "" : "\n")
+        | awk -v parser="$parser" -v show="$SHOW_BAR" -v cols="$COLS" \
+              -v base="$PERCENT" -v span="$((100 / TOTAL_STEPS))" "$BAR_AWK"'
+            function log_line(text) {
+                if (show) unbar()
+                if (length(text) > cols - 1) text = substr(text, 1, cols - 2) "…"
+                print text
+                if (show) bar(current)
                 fflush()
             }
-            function percent_in(line,    m) {
+            function advance(pct) {
+                pct = base + int(pct * span / 100)
+                if (pct <= current) return
+                current = pct
+                if (show) bar(current)
+            }
+            function percent_in(line) {
                 if (match(line, /[0-9]+%/)) return substr(line, RSTART, RLENGTH - 1) + 0
                 return -1
             }
-            BEGIN { shown = -1; draw(0, "starting") ; shown = 0 }
+            BEGIN { current = base; srand(); started = srand() }
             parser == "git" {
+                if (match($0, /[0-9.]+ [KMG]?i?B/) && $0 ~ /Receiving objects/) size = substr($0, RSTART, RLENGTH)
                 p = percent_in($0)
                 if (p < 0) next
-                if ($0 ~ /Counting objects/)         draw(int(p * 5 / 100), "counting objects")
-                else if ($0 ~ /Compressing objects/) draw(5 + int(p * 5 / 100), "compressing objects")
-                else if ($0 ~ /Receiving objects/)   draw(10 + int(p * 80 / 100), "receiving objects")
-                else if ($0 ~ /Resolving deltas/)    draw(90 + int(p * 10 / 100), "resolving deltas")
+                if ($0 ~ /Counting objects/)         advance(int(p * 5 / 100))
+                else if ($0 ~ /Compressing objects/) advance(5 + int(p * 5 / 100))
+                else if ($0 ~ /Receiving objects/)   advance(10 + int(p * 80 / 100))
+                else if ($0 ~ /Resolving deltas/)    advance(90 + int(p * 10 / 100))
                 next
             }
             parser == "docker" {
                 # BuildKit: "#7 [builder 2/9] RUN ..."; classic builder: "Step 2/9 : RUN ...".
-                if (match($0, /\[[^]]*[0-9]+\/[0-9]+\]/) || match($0, /Step [0-9]+\/[0-9]+/)) {
-                    token = substr($0, RSTART, RLENGTH)
-                    stage = token
-                    sub(/[0-9]+\/[0-9]+\]?$/, "", stage)
-                    match(token, /[0-9]+\/[0-9]+/)
-                    split(substr(token, RSTART, RLENGTH), nm, "/")
-                    if (!(stage in total)) { total[stage] = nm[2]; all += nm[2] }
-                    if (nm[1] - 1 > done[stage]) { finished += nm[1] - 1 - done[stage]; done[stage] = nm[1] - 1 }
-                    what = $0
-                    sub(/^.*(\]|: ) */, "", what)
-                    split(what, words, " ")
-                    draw(int(finished * 100 / all), tolower(words[1]) " " words[2])
-                }
+                if (!match($0, /\[[^]]*[0-9]+\/[0-9]+\]/) && !match($0, /Step [0-9]+\/[0-9]+/)) next
+                token = substr($0, RSTART, RLENGTH)
+                if (token in seen) next
+                seen[token] = 1
+                stage = token
+                sub(/[0-9]+\/[0-9]+\]?$/, "", stage)
+                match(token, /[0-9]+\/[0-9]+/)
+                split(substr(token, RSTART, RLENGTH), nm, "/")
+                if (!(stage in total)) { total[stage] = nm[2]; all += nm[2] }
+                if (nm[1] - 1 > done[stage]) { finished += nm[1] - 1 - done[stage]; done[stage] = nm[1] - 1 }
+                what = $0
+                sub(/^.*(\]|: ) */, "", what)
+                log_line("Step " nm[1] "/" nm[2] ": " what)
+                advance(int(finished * 100 / all))
                 next
             }
             END {
-                final = 1
-                if ((getline code < status_file) > 0 && code == "0") draw(100, "done")
-                if (tty) printf "\n"
-            }'
+                if ((getline code < status_file) <= 0 || code != "0") exit
+                advance(100)
+                srand(); elapsed = srand() - started
+                if (parser == "git") log_line("Fetched " (size != "" ? size " " : "") "in " elapsed "s")
+            }' status_file="$progress_status"
     progress_code=$(cat "$progress_status" 2>/dev/null || echo 1)
     if [ "$progress_code" != "0" ]; then
-        printf '        \033[31mfailed\033[0m (exit %s); last lines of output:\n' "$progress_code" >&2
-        tail -n 20 "$progress_log" | tr '\r' '\n' | tail -n 20 | sed 's/^/          /' >&2
+        clear_bar
+        printf 'E: %s exited with status %s; last lines of its output:\n' "$1" "$progress_code" >&2
+        tail -n 20 "$progress_log" | tr '\r' '\n' | tail -n 20 | sed 's/^/  /' >&2
+    else
+        PERCENT=$((PERCENT + 100 / TOTAL_STEPS))
     fi
     rm -f "$progress_log" "$progress_status"
     return "$progress_code"
