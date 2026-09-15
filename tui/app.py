@@ -27,6 +27,10 @@ Contains:
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
     ShipwrightApp.toggle_plan_mode(): turns plan-then-execute on and off
     ShipwrightApp.approve_plan(): shows a proposed plan and waits for an answer
+    ShipwrightApp.tool_gate(): the gate a run asks before each tool call
+    ShipwrightApp.approve_tool(): asks about one tool call and waits for an answer
+    ShipwrightApp.show_approval_panel(): mounts an approval panel and focuses it
+    ShipwrightApp.on_approval_panel_decided(): returns the keyboard to the composer
     ShipwrightApp.show_plan_panel(): mounts a plan panel and focuses it
     ShipwrightApp.on_setup_panel_saved(): dismisses onboarding once a key is stored
     ShipwrightApp.on_setup_panel_skipped(): dismisses onboarding when declined
@@ -56,6 +60,7 @@ from agent.llm_client import (
 )
 from agent.llm_client import Message as LoopMessage
 from agent.loop import AgentConfig, AgentLoop, Step
+from agent.permissions import PermissionMode, ToolGate, gate_for
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
@@ -72,6 +77,7 @@ from tui.screens.footer import FooterBar
 from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
 from tui.transcript import resume
+from tui.widgets.approval_panel import ApprovalPanel
 from tui.widgets.context_bar import ContextBar
 from tui.widgets.plan_panel import PlanPanel
 from tui.widgets.robot import Phase, Robot, StatusLine, phase_for_tool
@@ -95,7 +101,7 @@ HISTORY_TURN_LIMIT = 12
 HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
 PLAN_ON_NOTICE = "plan mode on — runs propose steps and wait for [a] to accept"
-PLAN_OFF_NOTICE = "plan mode off — runs execute directly"
+PLAN_OFF_NOTICE = "plan mode off — manual"
 SETUP_DONE_TEMPLATE = "{env_var} saved — you are ready to go"
 SETUP_SKIPPED_NOTICE = "setup skipped — set a provider key before starting a run"
 # The four regions, in the order they are composed down the screen.
@@ -196,6 +202,7 @@ class ShipwrightApp(App[None]):
         cost_tracker: CostTracker | None = None,
         palette: Palette | None = None,
         force_setup: bool = False,
+        permission_mode: PermissionMode = PermissionMode.MANUAL,
     ) -> None:
         """Builds the interface for one checkout.
 
@@ -206,6 +213,7 @@ class ShipwrightApp(App[None]):
             cost_tracker: Tracker the header's cost readout is drawn from.
             palette: Colours to render with; detected from the terminal when None.
             force_setup: Show onboarding even when a credential is already set.
+            permission_mode: How much the agent may do before it asks.
         """
         # Textual resolves CSS variables inside App.__init__, so the palette has
         # to exist before the base class is initialised.
@@ -219,7 +227,7 @@ class ShipwrightApp(App[None]):
         self.breaker = CircuitBreaker()
         self.router = CommandRouter()
         self.model: str | None = None
-        self.plan_mode = False
+        self.permission_mode = permission_mode
         self.active_loop: AgentLoop | None = None
         self.credential_verifier: Callable[[Provider, str], Verification] | None = None
         self.conversation: list[LoopMessage] = []
@@ -386,6 +394,7 @@ class ShipwrightApp(App[None]):
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
+        config.tool_gate = self.tool_gate()
         client = build_client(Provider(self.provider), self.model)
         if self.plan_mode:
             config.mode = "plan_execute"
@@ -473,6 +482,60 @@ class ShipwrightApp(App[None]):
         ]
         return "   ".join(names)
 
+    @property
+    def plan_mode(self) -> bool:
+        """Reports whether runs propose a plan before executing.
+
+        Returns:
+            plan_mode: True while the permission mode is plan.
+        """
+        return self.permission_mode is PermissionMode.PLAN
+
+    def tool_gate(self) -> ToolGate:
+        """Builds the gate a run asks before each tool call.
+
+        Returns:
+            gate: Checks the mode in force at call time and asks when it must.
+        """
+        return gate_for(lambda: self.permission_mode, self.approve_tool)
+
+    def approve_tool(self, tool_name: str, tool_args: dict[str, str]) -> bool | str:
+        """Asks the operator about one tool call and blocks the run until answered.
+
+        Runs on the worker thread, so the panel is mounted through the UI
+        thread and the worker parks on the panel's own decision event.
+
+        Args:
+            tool_name: Tool the agent wants to call.
+            tool_args: Arguments it would be called with.
+
+        Returns:
+            decision: True when approved, the operator's suggestion, or False.
+        """
+        panel = ApprovalPanel(tool_name, tool_args, palette=self.palette)
+        self.call_from_thread(self.show_approval_panel, panel)
+        return panel.wait_for_decision(PLAN_DECISION_TIMEOUT_S)
+
+    def show_approval_panel(self, panel: ApprovalPanel) -> None:
+        """Mounts an approval panel at the end of the transcript and focuses it.
+
+        Args:
+            panel: Panel awaiting the operator's decision.
+        """
+        timeline = self.query_one(Timeline)
+        timeline.mount(panel)
+        timeline.scroll_end(animate=False)
+        panel.focus()
+
+    def on_approval_panel_decided(self, event: ApprovalPanel.Decided) -> None:
+        """Hands the keyboard back to the composer once a call is answered.
+
+        Args:
+            event: Message carrying the decision.
+        """
+        event.stop()
+        self.query_one(Composer).focus_input()
+
     def toggle_plan_mode(self, argument: str) -> str:
         """Turns plan-then-execute on and off for later runs.
 
@@ -483,7 +546,7 @@ class ShipwrightApp(App[None]):
             line: Which mode later runs will use.
         """
         del argument
-        self.plan_mode = not self.plan_mode
+        self.permission_mode = PermissionMode.MANUAL if self.plan_mode else PermissionMode.PLAN
         return PLAN_ON_NOTICE if self.plan_mode else PLAN_OFF_NOTICE
 
     def approve_plan(self, plan: Plan) -> bool:
