@@ -4,9 +4,12 @@ test_approval_panel.py --- covers the panel asking whether a tool call may run
 
 Contains:
     PanelHarness: app mounting a single approval panel
-    _answer(): mounts a panel, presses one key, returns the decision
+    _answer(): mounts a panel, presses keys, returns the decision
     test_y_allows_the_call(): y approves
     test_n_and_escape_deny_the_call(): n and escape refuse
+    test_other_passes_a_typed_suggestion(): o, text, enter hands the text back
+    test_escape_closes_other_without_answering(): escape backs out of the field
+    test_empty_suggestion_is_a_denial(): enter on an empty field just denies
     test_silence_is_a_refusal(): a timeout never approves
     test_edit_proposal_is_coloured_like_a_diff(): find is red, replace is green
     test_command_is_shown_in_the_card(): a command appears inside the border
@@ -46,23 +49,23 @@ class PanelHarness(App[None]):
         self.panel.focus()
 
 
-def _answer(key: str) -> tuple[bool, bool]:
-    """Mounts a panel, presses one key, and reads back the decision.
+def _answer(*keys: str) -> tuple[bool, bool | str]:
+    """Mounts a panel, presses keys in order, and reads back the decision.
 
     Args:
-        key: Key to press.
+        keys: Keys to press.
 
     Returns:
-        is_allowed: Whether the call was approved.
-        decided: Whether a waiting worker would have been released.
+        is_answered: Whether the operator has answered.
+        decision: What a waiting worker would receive right now.
     """
     panel = ApprovalPanel("run_shell", {"command": "pytest -q"}, palette=DARK)
 
-    async def drive() -> tuple[bool, bool]:
+    async def drive() -> tuple[bool, bool | str]:
         async with PanelHarness(panel).run_test() as pilot:
-            await pilot.press(key)
+            await pilot.press(*keys)
             await pilot.pause()
-            return panel.is_allowed, panel.wait_for_decision(0)
+            return panel.is_answered, panel.wait_for_decision(0)
 
     return asyncio.run(drive())
 
@@ -74,8 +77,26 @@ def test_y_allows_the_call() -> None:
 
 def test_n_and_escape_deny_the_call() -> None:
     """Asserts n and escape both refuse the call."""
-    assert _answer("n") == (False, False)
-    assert _answer("escape") == (False, False)
+    assert _answer("n") == (True, False)
+    assert _answer("escape") == (True, False)
+
+
+def test_other_passes_a_typed_suggestion() -> None:
+    """Asserts o opens a field whose submitted text becomes the answer."""
+    typed = list("use tox")
+    typed[3] = "space"
+
+    assert _answer("o", *typed, "enter") == (True, "use tox")
+
+
+def test_escape_closes_other_without_answering() -> None:
+    """Asserts escape inside the field backs out rather than denying outright."""
+    assert _answer("o", "escape") == (False, False)
+
+
+def test_empty_suggestion_is_a_denial() -> None:
+    """Asserts submitting an empty suggestion counts as a plain denial."""
+    assert _answer("o", "enter") == (True, False)
 
 
 def test_silence_is_a_refusal() -> None:
@@ -94,11 +115,11 @@ def test_edit_proposal_is_coloured_like_a_diff() -> None:
 
 def test_command_is_shown_in_the_card() -> None:
     """Asserts the command sits inside the bordered card, under the question."""
-    drawn = ApprovalPanel("run_shell", {"command": "pytest -q"}, palette=DARK).render().plain
+    drawn = ApprovalPanel("run_shell", {"command": "pytest -q"}, palette=DARK).card_text(80).plain
 
     assert drawn.index("Allow running this command?") < drawn.index("╭")
     assert drawn.index("╭") < drawn.index("pytest -q") < drawn.index("╯")
-    assert "[y] allow" in drawn
+    assert "[y] approve   [n] deny   [o] other" in drawn
 
 
 def test_answered_panel_shrinks_to_one_line() -> None:
@@ -106,6 +127,6 @@ def test_answered_panel_shrinks_to_one_line() -> None:
     panel = ApprovalPanel("edit_file", {"path": "a.py", "find": "a", "replace": "b"}, palette=DARK)
     panel.action_deny()
 
-    drawn = panel.render().plain
+    drawn = panel.card_text(80).plain
 
     assert drawn == "denied  edit_file a.py"
