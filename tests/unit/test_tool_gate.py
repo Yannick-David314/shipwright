@@ -8,6 +8,7 @@ Contains:
     test_declined_call_does_not_run(): a refused write leaves the file untouched
     test_declined_call_is_reported_to_the_model(): the refusal is observed
     test_approved_call_runs(): a yes lets the tool run normally
+    test_suggestion_replaces_the_call(): other declines and passes the suggestion on
 """
 
 from pathlib import Path
@@ -75,3 +76,16 @@ def test_approved_call_runs(tmp_path: Path) -> None:
 
     assert (tmp_path / "notes.txt").read_text() == "hello"
     assert seen == [("write_file", {"path": "notes.txt", "content": "hello"})]
+
+
+def test_suggestion_replaces_the_call(tmp_path: Path) -> None:
+    """Asserts a typed suggestion declines the call and reaches the model verbatim."""
+    config = _config(tmp_path)
+    config.tool_gate = lambda tool, args: "  put it in docs/notes.md instead "
+
+    result = AgentLoop(ScriptedLLM(list(WRITE_THEN_FINISH)), config).run()
+
+    observation = result.steps[0].observation
+    assert not (tmp_path / "notes.txt").exists()
+    assert observation.startswith(TOOL_ERROR_PREFIX)
+    assert observation.endswith("asked for this instead: put it in docs/notes.md instead")

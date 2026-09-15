@@ -104,7 +104,9 @@ def needs_approval(mode: PermissionMode, tool_name: str) -> bool:
     return True
 
 
-type ToolGate = Callable[[str, dict[str, str]], bool]
+# True runs the call, False declines it, and text declines it with the
+# operator's suggestion for what to do instead.
+type ToolGate = Callable[[str, dict[str, str]], bool | str]
 
 
 def gate_for(mode: Callable[[], PermissionMode], ask: ToolGate) -> ToolGate:
@@ -115,13 +117,13 @@ def gate_for(mode: Callable[[], PermissionMode], ask: ToolGate) -> ToolGate:
 
     Args:
         mode: Returns the mode in force at the moment of the call.
-        ask: Asks the operator about one call; True means approved.
+        ask: Asks the operator about one call: True, False, or a suggestion.
 
     Returns:
-        gate: True when the call may run.
+        gate: True when the call may run, otherwise False or a suggestion.
     """
 
-    def gate(tool_name: str, tool_args: dict[str, str]) -> bool:
+    def gate(tool_name: str, tool_args: dict[str, str]) -> bool | str:
         if not needs_approval(mode(), tool_name):
             return True
         return ask(tool_name, tool_args)
