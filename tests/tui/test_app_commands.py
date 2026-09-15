@@ -10,6 +10,7 @@ Contains:
     test_model_without_a_key_is_refused(): a provider with no credential is rejected
     test_model_rejects_an_unknown_provider(): a typo does not change the provider
     test_plan_toggles_plan_mode(): /plan turns plan-then-execute on and off
+    test_command_reply_is_shown_in_the_transcript(): replies are drawn, not dropped
 """
 
 import asyncio
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from agent.llm_client import DEFAULT_MODELS, Provider
-from tui.app import ShipwrightApp
+from tui.app import PLAN_ON_NOTICE, ShipwrightApp
 from tui.commands import USAGE_MODEL
 
 DOCUMENTED_COMMANDS = {"plan", "resume", "model", "max-cost", "max-steps"}
@@ -122,3 +123,16 @@ def test_plan_toggles_plan_mode(tmp_path: Path) -> None:
 
     assert turned_on is True
     assert turned_off is False
+
+
+def test_command_reply_is_shown_in_the_transcript(tmp_path: Path) -> None:
+    """Asserts a slash command's reply is drawn, not just returned and dropped."""
+    app = _app(tmp_path)
+
+    def run() -> list[str]:
+        app.handle_line("/plan")
+        return [str(notice.render()) for notice in app.query(".notice")]
+
+    shown = _mounted(app, run)
+
+    assert shown == [PLAN_ON_NOTICE]

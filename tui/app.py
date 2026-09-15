@@ -12,6 +12,7 @@ Contains:
     ShipwrightApp.open_setup(): re-runs onboarding on demand
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
+    ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
     ShipwrightApp.on_composer_submitted(): routes a submitted line
     ShipwrightApp.handle_line(): runs a command or starts a turn
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
@@ -153,6 +154,11 @@ class ShipwrightApp(App[None]):
     #region-timeline {
         height: 1fr;
         padding: 0 2;
+    }
+    .notice {
+        height: auto;
+        margin-top: 1;
+        color: $text-muted;
     }
     .instruction {
         height: auto;
@@ -324,9 +330,24 @@ class ShipwrightApp(App[None]):
         except UnknownCommandError as exc:
             return f"unknown command: /{exc}"
         if routed is not None:
+            self.show_notice(routed)
             return routed
         self.start_turn_for(text)
         return text
+
+    def show_notice(self, notice: str) -> None:
+        """Writes a slash command's reply into the transcript.
+
+        Args:
+            notice: Reply to show; nothing is drawn when it is empty.
+        """
+        if not notice:
+            return
+        self.query_one("#region-hero").display = False
+        timeline = self.query_one(Timeline)
+        timeline.display = True
+        timeline.mount(Static(Text(notice), classes="notice"))
+        timeline.scroll_end(animate=False)
 
     def start_turn_for(self, instruction: str) -> None:
         """Opens a turn for one instruction and hands it to the agent.
