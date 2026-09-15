@@ -25,6 +25,7 @@ Contains:
     ShipwrightApp.describe_models(): lists the models the provider serves
     ShipwrightApp.mode_label(): the permission mode shown under the composer
     ShipwrightApp.set_permission_mode(): switches mode and shows it
+    ShipwrightApp.mode_command(): lists the modes, or switches to the one named
     ShipwrightApp.action_cycle_mode(): moves to the next mode on shift+tab
     ShipwrightApp.model_label(): the model shown under the composer
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
@@ -63,7 +64,15 @@ from agent.llm_client import (
 )
 from agent.llm_client import Message as LoopMessage
 from agent.loop import AgentConfig, AgentLoop, Step
-from agent.permissions import PermissionMode, ToolGate, gate_for, next_mode
+from agent.permissions import (
+    MODE_DESCRIPTIONS,
+    MODE_ORDER,
+    PermissionMode,
+    ToolGate,
+    gate_for,
+    next_mode,
+    parse_mode,
+)
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
@@ -103,6 +112,7 @@ SETUP_REOPENED = "pick a provider and paste a key; enter to save, esc to cancel"
 HISTORY_TURN_LIMIT = 12
 HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
+USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
     PermissionMode.MANUAL: "⏸",
     PermissionMode.EDIT_AUTOMATICALLY: "⏵⏵",
@@ -321,6 +331,7 @@ class ShipwrightApp(App[None]):
         self.router.register("resume", resume)
         self.router.register("model", self.switch_provider)
         self.router.register("plan", self.toggle_plan_mode)
+        self.router.register("mode", self.mode_command)
         self.router.register("setup", self.open_setup)
 
     def on_mount(self) -> None:
@@ -665,6 +676,27 @@ class ShipwrightApp(App[None]):
         """
         self.permission_mode = mode
         self.query_one(ContextBar).set_mode(self.mode_label())
+
+    def mode_command(self, argument: str) -> str:
+        """Lists the permission modes, or switches to the one named.
+
+        Args:
+            argument: Mode name or alias; empty to list the modes.
+
+        Returns:
+            line: The modes with the active one marked, the new mode, or usage.
+        """
+        if not argument.strip():
+            return "\n".join(
+                f"{'*' if mode is self.permission_mode else ' '} {mode.value:<20} "
+                f"{MODE_DESCRIPTIONS[mode]}"
+                for mode in MODE_ORDER
+            )
+        mode = parse_mode(argument)
+        if mode is None:
+            return USAGE_MODE
+        self.set_permission_mode(mode)
+        return f"{mode.value}: {MODE_DESCRIPTIONS[mode]}"
 
     def action_cycle_mode(self) -> None:
         """Moves to the next permission mode, as shift+tab does in the composer."""

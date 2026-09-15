@@ -12,6 +12,7 @@ Contains:
     test_edit_automatically_still_asks_before_a_command(): commands still wait
     test_bypass_never_asks(): nothing is asked in bypass
     test_shift_tab_cycles_modes_from_the_composer(): the key works while typing
+    test_mode_command_lists_and_switches(): /mode lists, switches, and rejects junk
 """
 
 import asyncio
@@ -22,7 +23,7 @@ import pytest
 from agent.llm_client import ScriptedLLM
 from agent.loop import AgentConfig, AgentLoop
 from agent.permissions import PermissionMode
-from tui.app import ShipwrightApp
+from tui.app import USAGE_MODE, ShipwrightApp
 from tui.screens.composer import Composer
 from tui.screens.timeline import Timeline
 from tui.widgets.approval_panel import ApprovalPanel
@@ -166,3 +167,35 @@ def test_shift_tab_cycles_modes_from_the_composer(tmp_path: Path) -> None:
     ]
     assert all(mode.value in bar and "shift+tab" in bar for mode, bar, _ in seen)
     assert all(focused for _, _, focused in seen)
+
+
+def test_mode_command_lists_and_switches(tmp_path: Path) -> None:
+    """Asserts /mode lists the modes, switches by name or alias, and refuses junk."""
+    app = GatedApp(tmp_path, provider="anthropic")
+
+    async def drive() -> tuple[str, str, PermissionMode, str, PermissionMode, str]:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            listing = app.handle_line("/mode")
+            switched = app.handle_line("/mode edit")
+            after_switch = app.permission_mode
+            refused = app.handle_line("/mode yolo")
+            after_refusal = app.permission_mode
+            return (
+                listing,
+                switched,
+                after_switch,
+                refused,
+                after_refusal,
+                "".join(app.query_one(ContextBar).render_text()),
+            )
+
+    listing, switched, after_switch, refused, after_refusal, bar = asyncio.run(drive())
+
+    assert listing.splitlines()[0].startswith("* manual")
+    assert len(listing.splitlines()) == 4
+    assert switched.startswith("edit automatically:")
+    assert after_switch is PermissionMode.EDIT_AUTOMATICALLY
+    assert refused == USAGE_MODE
+    assert after_refusal is PermissionMode.EDIT_AUTOMATICALLY
+    assert "edit automatically" in bar
