@@ -11,6 +11,7 @@ Contains:
     test_edit_automatically_writes_without_asking(): no panel for an edit
     test_edit_automatically_still_asks_before_a_command(): commands still wait
     test_bypass_never_asks(): nothing is asked in bypass
+    test_shift_tab_cycles_modes_from_the_composer(): the key works while typing
 """
 
 import asyncio
@@ -22,8 +23,10 @@ from agent.llm_client import ScriptedLLM
 from agent.loop import AgentConfig, AgentLoop
 from agent.permissions import PermissionMode
 from tui.app import ShipwrightApp
+from tui.screens.composer import Composer
 from tui.screens.timeline import Timeline
 from tui.widgets.approval_panel import ApprovalPanel
+from tui.widgets.context_bar import ContextBar
 
 WRITE = ["Writing.\nAction: write_file\npath=notes.txt\ncontent=hello", "FINAL: wrote it"]
 COMMAND = ["Checking.\nAction: run_shell\ncommand=touch ran.txt", "FINAL: ran it"]
@@ -133,3 +136,33 @@ def test_bypass_never_asks(tmp_path: Path) -> None:
     assert _run(tmp_path, WRITE, PermissionMode.BYPASS, None) == (0, True)
     assert _run(tmp_path, COMMAND, PermissionMode.BYPASS, None) == (0, True)
     assert (tmp_path / "ran.txt").exists()
+
+
+def test_shift_tab_cycles_modes_from_the_composer(tmp_path: Path) -> None:
+    """Asserts shift+tab walks the modes with the caret in the composer, and shows each."""
+    app = GatedApp(tmp_path, provider="anthropic")
+
+    async def drive() -> list[tuple[PermissionMode, str, bool]]:
+        seen = []
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for _ in range(5):
+                bar = app.query_one(ContextBar).render_text()
+                composer = app.query_one(Composer)
+                focused = app.focused is not None and composer in app.focused.ancestors
+                seen.append((app.permission_mode, bar, focused))
+                await pilot.press("shift+tab")
+                await pilot.pause()
+        return seen
+
+    seen = asyncio.run(drive())
+
+    assert [mode for mode, _, _ in seen] == [
+        PermissionMode.MANUAL,
+        PermissionMode.EDIT_AUTOMATICALLY,
+        PermissionMode.PLAN,
+        PermissionMode.BYPASS,
+        PermissionMode.MANUAL,
+    ]
+    assert all(mode.value in bar and "shift+tab" in bar for mode, bar, _ in seen)
+    assert all(focused for _, _, focused in seen)

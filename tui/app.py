@@ -23,6 +23,9 @@ Contains:
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
     ShipwrightApp.switch_provider(): points later runs at another provider or model
     ShipwrightApp.describe_models(): lists the models the provider serves
+    ShipwrightApp.mode_label(): the permission mode shown under the composer
+    ShipwrightApp.set_permission_mode(): switches mode and shows it
+    ShipwrightApp.action_cycle_mode(): moves to the next mode on shift+tab
     ShipwrightApp.model_label(): the model shown under the composer
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
     ShipwrightApp.toggle_plan_mode(): turns plan-then-execute on and off
@@ -60,7 +63,7 @@ from agent.llm_client import (
 )
 from agent.llm_client import Message as LoopMessage
 from agent.loop import AgentConfig, AgentLoop, Step
-from agent.permissions import PermissionMode, ToolGate, gate_for
+from agent.permissions import PermissionMode, ToolGate, gate_for, next_mode
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
@@ -100,6 +103,12 @@ SETUP_REOPENED = "pick a provider and paste a key; enter to save, esc to cancel"
 HISTORY_TURN_LIMIT = 12
 HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
+MODE_MARKERS: dict[PermissionMode, str] = {
+    PermissionMode.MANUAL: "⏸",
+    PermissionMode.EDIT_AUTOMATICALLY: "⏵⏵",
+    PermissionMode.PLAN: "⏸",
+    PermissionMode.BYPASS: "⏵⏵",
+}
 PLAN_ON_NOTICE = "plan mode on — runs propose steps and wait for [a] to accept"
 PLAN_OFF_NOTICE = "plan mode off — manual"
 SETUP_DONE_TEMPLATE = "{env_var} saved — you are ready to go"
@@ -192,6 +201,8 @@ class ShipwrightApp(App[None]):
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+l", "screenshot", "Screenshot"),
+        # Priority, so the composer's own focus handling never swallows it.
+        Binding("shift+tab", "cycle_mode", "Mode", priority=True),
     ]
 
     def __init__(
@@ -288,7 +299,7 @@ class ShipwrightApp(App[None]):
         composer.id = REGION_IDS[2]
         yield composer
 
-        context = ContextBar(self.model_label(), palette=self.palette)
+        context = ContextBar(self.model_label(), palette=self.palette, mode_label=self.mode_label())
         context.id = "region-context"
         yield context
 
@@ -546,7 +557,7 @@ class ShipwrightApp(App[None]):
             line: Which mode later runs will use.
         """
         del argument
-        self.permission_mode = PermissionMode.MANUAL if self.plan_mode else PermissionMode.PLAN
+        self.set_permission_mode(PermissionMode.MANUAL if self.plan_mode else PermissionMode.PLAN)
         return PLAN_ON_NOTICE if self.plan_mode else PLAN_OFF_NOTICE
 
     def approve_plan(self, plan: Plan) -> bool:
@@ -635,6 +646,29 @@ class ShipwrightApp(App[None]):
         panel.id = "region-setup"
         self.mount(panel, before=self.query_one(Timeline))
         return SETUP_REOPENED
+
+    def mode_label(self) -> str:
+        """Renders the permission mode as the bar under the composer shows it.
+
+        Returns:
+            label: A marker and the mode's name.
+        """
+        return f"{MODE_MARKERS[self.permission_mode]} {self.permission_mode.value}"
+
+    def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Switches the permission mode and shows it under the composer.
+
+        A run in flight picks the new mode up at its next tool call.
+
+        Args:
+            mode: Mode to switch to.
+        """
+        self.permission_mode = mode
+        self.query_one(ContextBar).set_mode(self.mode_label())
+
+    def action_cycle_mode(self) -> None:
+        """Moves to the next permission mode, as shift+tab does in the composer."""
+        self.set_permission_mode(next_mode(self.permission_mode))
 
     def model_label(self) -> str:
         """Renders the model currently answering.
