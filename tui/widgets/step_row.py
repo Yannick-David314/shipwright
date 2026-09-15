@@ -10,6 +10,8 @@ Contains:
     TARGET_ARGS: tool arguments that name what a step acted on
     step_target(): picks the argument naming what a step acted on
     shorten_target(): trims a target through the CLI's own truncation helper
+    CardSection: one labelled section of a bordered card
+    draw_card(): appends a bordered card of labelled sections to some text
     StepRow: one activity row that opens to reveal its output
     StepRow.has_failed(): whether the step reported an error
     StepRow.summary_line(): renders the collapsed one-line summary
@@ -90,6 +92,44 @@ def shorten_target(target: str) -> str:
         text: The value, truncated the same way the CLI truncates it.
     """
     return _shorten(target)
+
+
+type CardSection = tuple[str, list[tuple[str, str]]]
+
+
+def draw_card(block: Text, sections: list[CardSection], width: int, palette: Palette) -> Text:
+    """Appends a bordered card of labelled sections to a block of text.
+
+    Sections are split by a rule, lines wrap inside the border instead of
+    breaking its right edge, and the border is drawn in the accent colour.
+
+    Args:
+        block: Text the card is appended to, on a new line.
+        sections: (label, [(text, style)]) pairs, drawn top to bottom.
+        width: Total width of the card, borders included.
+        palette: Colours for the border and the labels.
+
+    Returns:
+        block: The same text, with the card appended.
+    """
+    border = palette.accent
+    inner = width - 2
+    text_width = max(inner - LABEL_WIDTH - 2, 1)
+    block.append("\n╭" + "─" * inner + "╮", style=border)
+    for index, (label, lines) in enumerate(sections):
+        if index:
+            block.append("\n├" + "─" * inner + "┤", style=border)
+        first = True
+        for line, style in lines:
+            for chunk in chop_cells(line, text_width) or [""]:
+                block.append("\n│ ", style=border)
+                shown_label = label if first else ""
+                block.append(f"{shown_label:<{LABEL_WIDTH}}", style=palette.hunk)
+                block.append(chunk + " " * (text_width - cell_len(chunk)), style=style)
+                block.append(" │", style=border)
+                first = False
+    block.append("\n╰" + "─" * inner + "╯", style=border)
+    return block
 
 
 class StepRow(Static):
@@ -245,7 +285,7 @@ class StepRow(Static):
             lines = [*lines[:DIFF_PREVIEW_LINES], (hint, self.palette.hunk)]
         return lines
 
-    def card_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
+    def card_sections(self) -> list[CardSection]:
         """Groups what the open card shows into its labelled sections.
 
         Returns:
@@ -254,7 +294,7 @@ class StepRow(Static):
         if not self.is_expanded:
             return []
         plain = self.palette.foreground
-        sections: list[tuple[str, list[tuple[str, str]]]] = []
+        sections: list[CardSection] = []
         target = step_target(self.tool_args)
         if target:
             sections.append(
@@ -284,24 +324,7 @@ class StepRow(Static):
         sections = self.card_sections()
         if not sections:
             return block
-
-        inner = self.card_width() - 2
-        text_width = max(inner - LABEL_WIDTH - 2, 1)
-        block.append("\n╭" + "─" * inner + "╮", style=border)
-        for index, (label, lines) in enumerate(sections):
-            if index:
-                block.append("\n├" + "─" * inner + "┤", style=border)
-            first = True
-            for line, style in lines:
-                for chunk in chop_cells(line, text_width) or [""]:
-                    block.append("\n│ ", style=border)
-                    shown_label = label if first else ""
-                    block.append(f"{shown_label:<{LABEL_WIDTH}}", style=self.palette.hunk)
-                    block.append(chunk + " " * (text_width - cell_len(chunk)), style=style)
-                    block.append(" │", style=border)
-                    first = False
-        block.append("\n╰" + "─" * inner + "╯", style=border)
-        return block
+        return draw_card(block, sections, self.card_width(), self.palette)
 
         inner = self.card_width() - 2
         text_width = max(inner - LABEL_WIDTH - 2, 1)
