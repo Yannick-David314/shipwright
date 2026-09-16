@@ -18,6 +18,8 @@ Contains:
     test_force_setup_reopens_onboarding(): --setup asks again despite a stored key
     test_setup_command_reopens_onboarding(): /setup asks again mid-session
     test_rerunning_setup_shows_only_the_provider_card(): no welcome, no terms
+    test_fresh_install_onboards_even_with_a_key_set(): a new install always welcomes
+    test_saving_marks_the_install_onboarded(): the next launch goes straight home
     test_setup_offers_configured_providers_too(): switching provider is possible
     test_terms_have_no_em_dashes_or_colons(): the paragraph reads as plain prose
     test_heading_fits_the_window(): one line when wide, two when narrower, none when tiny
@@ -30,7 +32,7 @@ import pytest
 from textual import events
 
 from agent.llm_client import CREDENTIAL_ENV_VARS
-from tui.app import ShipwrightApp
+from tui.app import ONBOARDED_MARKER, STATE_DIR_ENV, ShipwrightApp
 from tui.screens.composer import Composer
 from tui.screens.onboarding import TERMS_TEXT, TERMS_TITLE, OnboardingScreen, TermsCard
 from tui.widgets.setup_panel import SetupPanel, Verification
@@ -389,3 +391,47 @@ def test_rerunning_setup_shows_only_the_provider_card(
 
     assert asyncio.run(_run(ShipwrightApp(tmp_path), command=True)) == (0, 0, 1)
     assert asyncio.run(_run(ShipwrightApp(tmp_path, force_setup=True), command=False)) == (0, 0, 1)
+
+
+def test_fresh_install_onboards_even_with_a_key_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts an install with no onboarded marker shows the welcome despite a key."""
+    _keyless(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-left-over")
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv(STATE_DIR_ENV, str(state))
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> tuple[bool, int]:
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            return isinstance(app.screen, OnboardingScreen), len(app.screen.query(TermsCard))
+
+    assert asyncio.run(_run()) == (True, 1)
+
+
+def test_saving_marks_the_install_onboarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts completing onboarding writes the marker, so the next launch goes home."""
+    _keyless(monkeypatch)
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv(STATE_DIR_ENV, str(state))
+    app = ShipwrightApp(tmp_path)
+    app.credential_verifier = _accept
+
+    remaining, _ = _panel_count(app, action="save")
+
+    assert remaining == 0
+    assert (state / ONBOARDED_MARKER).exists()
+
+    async def _relaunch() -> bool:
+        relaunched = ShipwrightApp(tmp_path)
+        async with relaunched.run_test() as pilot:
+            await pilot.pause()
+            return isinstance(relaunched.screen, OnboardingScreen)
+
+    assert asyncio.run(_relaunch()) is False
