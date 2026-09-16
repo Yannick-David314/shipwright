@@ -12,6 +12,7 @@ Contains:
     supports_color(): decides whether a terminal should be sent colour
     palette_for(): picks the palette a terminal should render with
     CSS_VARIABLE_NAMES: which Textual design token each palette field feeds
+    TOKEN_FALLBACKS: built-in tokens that custom tokens borrow when left blank
     css_variables(): renders a palette as Textual design tokens
 """
 
@@ -36,6 +37,7 @@ class Palette:
         panel_border: Border color of a panel.
         border_subtle: Border color for low-emphasis separators.
         highlight: Second colour, for body text that should stand apart from the blue.
+        caution: Warm colour for notices the reader should stop at, such as a disclaimer.
     """
 
     background: str
@@ -49,6 +51,7 @@ class Palette:
     panel_border: str
     border_subtle: str
     highlight: str
+    caution: str
 
 
 # Sampled from docs/media/wordmark.png, and the same blue the README badges use.
@@ -66,6 +69,7 @@ DARK = Palette(
     panel_border=BRAND_BLUE,
     border_subtle="#1c4f8f",
     highlight="#2ec4b6",
+    caution="#e3b341",
 )
 
 
@@ -81,6 +85,7 @@ MONOCHROME = Palette(
     panel_border="",
     border_subtle="",
     highlight="",
+    caution="",
 )
 COLORLESS_TERMS = frozenset({"", "dumb", "unknown"})
 
@@ -141,6 +146,12 @@ CSS_VARIABLE_NAMES: dict[str, str] = {
     "panel-border": "panel_border",
     "border-subtle": "border_subtle",
     "secondary": "highlight",
+    "caution": "caution",
+}
+# Tokens Textual does not define itself, and the built-in token each borrows
+# when the palette leaves it blank, so a colourless terminal still parses.
+TOKEN_FALLBACKS: dict[str, str] = {
+    "caution": "warning",
 }
 
 
