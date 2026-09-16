@@ -12,6 +12,7 @@ Contains:
     AgentLoop._parse_step(): splits model output into a step
     AgentLoop._render_step(): replays a past step as the model's own turn
     AgentLoop._act(): runs the chosen tool and captures output
+    AgentLoop._is_reply(): whether a closing step is a conversational reply
     AgentLoop._record_cost(): accumulates one completion's spend
     AgentLoop._plan_approved(): asks the gate whether a plan may execute
     AgentLoop._run_plan_mode(): executes planner steps directly
@@ -61,6 +62,7 @@ _MARKER_DECORATION = r"[ \t>*_`#-]*"
 _MARKER_TRAILER = r"[ \t]*[*_`]*[ \t]*"
 ACTION_PATTERN = re.compile(_MARKER_DECORATION + r"action[ \t]*:" + _MARKER_TRAILER, re.IGNORECASE)
 FINAL_PATTERN = re.compile(_MARKER_DECORATION + r"final[ \t]*:" + _MARKER_TRAILER, re.IGNORECASE)
+REPLY_PATTERN = re.compile(_MARKER_DECORATION + r"reply[ \t]*:" + _MARKER_TRAILER, re.IGNORECASE)
 MARKUP_CHARS = "*_` "
 TOOL_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 # Arguments whose value may run past the end of the line.
@@ -93,6 +95,16 @@ TOOL_USAGE_INSTRUCTIONS = (
     "The paths above are only examples of the format. Use the paths from the "
     "task and from what the tools actually show you.\n\n"
     "Only the tool names listed above exist; anything else is rejected."
+)
+# Added for an interactive session, where not every message is a task.
+CONVERSATION_INSTRUCTIONS = (
+    "You are talking with a developer in their terminal, and not every message "
+    "is a task. When the message is conversation or a question you can answer "
+    "without looking at the code, such as a greeting, thanks, or a general "
+    "question, answer it directly and call no tool:\n\n"
+    "REPLY: <your answer>\n\n"
+    "Only inspect or change the checkout when they ask for something that needs "
+    "it. Never say you read, changed or ran anything unless a tool did it."
 )
 TRUNCATED_OBSERVATION_NOTE = "[older observation trimmed to fit the context budget]"
 MAX_UNGROUNDED_FINALS = 2
@@ -277,6 +289,9 @@ class AgentConfig:
         require_tool_before_final: Refuse a final answer from a run that has
             not called a single tool, so the agent cannot report work it
             never did.
+        conversational: Let the model answer conversation directly with
+            REPLY:, which never needs a tool, instead of treating every
+            message as a task.
     """
 
     repo_path: str
@@ -291,6 +306,7 @@ class AgentConfig:
     breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
     cost_tracker: CostTracker | None = None
     require_tool_before_final: bool = True
+    conversational: bool = False
 
 
 class AgentLoop:
@@ -341,7 +357,8 @@ class AgentLoop:
             self._transcript.append(step)
             if not step.tool_name:
                 if (
-                    self.config.require_tool_before_final
+                    not self._is_reply(step)
+                    and self.config.require_tool_before_final
                     and self._tool_calls == 0
                     and self._ungrounded_finals < MAX_UNGROUNDED_FINALS
                 ):
@@ -387,7 +404,11 @@ class AgentLoop:
         )
         self._record_cost(completion)
         step = self._parse_step(completion.text)
-        if not step.tool_name and FINAL_PATTERN.search(completion.text) is None:
+        if (
+            not step.tool_name
+            and FINAL_PATTERN.search(completion.text) is None
+            and not (self.config.conversational and REPLY_PATTERN.search(completion.text))
+        ):
             messages.append(Message(role="user", content=PARSE_RETRY_HINT))
             completion = self._client.complete(
                 messages, self._build_system_prompt(), STEP_BUDGET_TOKENS
@@ -589,8 +610,24 @@ class AgentLoop:
         """
         step.observation = output
 
+    def _is_reply(self, step: Step) -> bool:
+        """Reports whether a closing step is a conversational reply, not a finished task.
+
+        Args:
+            step: Closing step to classify.
+
+        Returns:
+            is_reply: True in a conversational run when the step carries REPLY:
+                and no FINAL:.
+        """
+        return (
+            self.config.conversational
+            and REPLY_PATTERN.search(step.thought) is not None
+            and FINAL_PATTERN.search(step.thought) is None
+        )
+
     def _extract_final(self, step: Step) -> str:
-        """Strips the final-answer marker from a closing step.
+        """Strips the final-answer or reply marker from a closing step.
 
         Args:
             step: Closing step whose thought holds the answer.
@@ -598,7 +635,8 @@ class AgentLoop:
         Returns:
             answer: Answer text without the marker prefix.
         """
-        match = FINAL_PATTERN.search(step.thought)
+        pattern = REPLY_PATTERN if self._is_reply(step) else FINAL_PATTERN
+        match = pattern.search(step.thought)
         answer = step.thought[match.end() :].strip() if match else ""
         if not answer:
             return step.thought.strip()
@@ -732,11 +770,12 @@ class AgentLoop:
         """
         base = self.config.system_prompt or "You are an autonomous coding agent."
         tools = self._dispatcher.describe_tools()
+        conversation = f"\n\n{CONVERSATION_INSTRUCTIONS}" if self.config.conversational else ""
         return (
             f"{base}\n\n"
             f"Your task:\n{self.config.task}\n\n"
             f"Available tools:\n{tools}\n\n"
-            f"{TOOL_USAGE_INSTRUCTIONS}"
+            f"{TOOL_USAGE_INSTRUCTIONS}{conversation}"
         )
 
     def set_client(self, client: LLMClient) -> None:
