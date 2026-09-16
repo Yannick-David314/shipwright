@@ -2,7 +2,7 @@
 
 Thanks for helping. This document is the whole playbook: how to set up, how to
 work, and the standards every change is held to. Code review exists partly to
-enforce these — reading them once saves everyone a round trip.
+enforce these, so reading them once saves everyone a round trip.
 
 ## Getting started
 
@@ -21,7 +21,7 @@ enforce these — reading them once saves everyone a round trip.
    registered) is a hard dependency, not a convenience.
 
 4. Open the interface with `ship` (or `docker compose exec agent ship` against
-   the containerized stack). There is no web UI and no browser in the loop —
+   the containerized stack). There is no web UI and no browser in the loop;
    `tui/` is the front end.
 
 ### Local tooling (optional, for fast lint/test loops)
@@ -54,11 +54,11 @@ exercise a change to `tui/`.
   line 42`).
 - Small, atomic commits. A commit does one logical thing and could be reverted
   cleanly on its own.
-- Every commit is authored and committed **as you** — your own configured
+- Every commit is authored and committed **as you**, with your own configured
   `user.name`/`user.email` matching your GitHub account, never a tool's default
   identity and never a bot. The point is traceability: a commit should lead back
   to the person who reviewed and tested it.
-- Whatever tooling you used to get there — editors, generators, AI assistants —
+- Whatever tooling you used to get there (editors, generators, AI assistants)
   is yours to mention or not. If it helps a reviewer understand the change, say
   so in the PR description.
 
@@ -72,7 +72,7 @@ exercise a change to `tui/`.
   library bug, a deliberate deviation from the obvious approach, a magic
   constant with a real source.
 - Never comment what the code already says, and never commit commented-out
-  code. Delete it — git history is the archive.
+  code. Delete it; git history is the archive.
 
 ### File headers
 
@@ -91,7 +91,7 @@ exact layout.
 - `Args:` / `Returns:` sections when there is something to say; omit them when
   there isn't. Classes get `Attributes:` when they hold meaningful state.
 - If a docstring needs more than a couple of lines per section, the function is
-  doing too much — split it.
+  doing too much, so split it.
 
 ### Formatting, linting, types
 
@@ -100,20 +100,20 @@ exact layout.
   unchecked `!` assertions without a comment justifying them.
 - **Everything else** (JSON, YAML, Markdown, CSS): Prettier.
 - Line length is 100 characters. Double quotes everywhere. Zero warnings on
-  merge — the same checks run locally and as a CI gate, so nothing merges that
+  merge. The same checks run locally and as a CI gate, so nothing merges that
   wouldn't pass locally first.
 
 ### Structure and design
 
 - One responsibility per function and per class; a class's name says what it
-  does. No god files — split modules along responsibility lines.
+  does. No god files; split modules along responsibility lines.
 - Composition over inheritance. Small, explicit interfaces. Dependency
   injection over global state or hidden singletons.
 - Functions stay short enough to read without scrolling (~30 lines); extract a
   helper before that. Guard clauses over nested `if` pyramids. No magic numbers
-  or strings inline — name them as constants.
-- Prefer immutable data (`frozen=True` dataclasses, readonly TS types) —
-  mutable shared state is where most concurrency bugs come from.
+  or strings inline; name them as constants.
+- Prefer immutable data (`frozen=True` dataclasses, readonly TS types),
+  since mutable shared state is where most concurrency bugs come from.
 - No side effects at import time; imports only above the first code block.
 
 ### Error handling
@@ -137,7 +137,7 @@ exact layout.
   in `gateway/tests/` so `tsc -p tsconfig.json` never ships them in `dist/`.
 - New logic ships with tests in the same PR, not a follow-up ticket.
 - A test asserts on real behavior. A mock that always returns success proves
-  nothing — mocked dependencies must be able to fail in the test.
+  nothing. Mocked dependencies must be able to fail in the test.
 - Sandbox integration tests run with `SHIPWRIGHT_INTEGRATION=1 pytest tests/ -q`
   and launch real containers; keep unit tests runnable without it.
 - Red-team regressions are numbered (`REG-NNN`). Every contained finding gets
@@ -145,10 +145,10 @@ exact layout.
 
 ## Security
 
-- No secrets, API keys, or credentials in code, ever — `.env` only, and `.env`
+- No secrets, API keys, or credentials in code, ever. Use `.env` only; `.env`
   is gitignored from day one. `.env.example` is what you commit.
 - Least privilege by default: a service gets only the access it needs. Widening
-  the sandbox egress allowlist is a security decision — justify it in the PR
+  the sandbox egress allowlist is a security decision, so justify it in the PR
   and expect scrutiny.
 - Sandbox escapes, even "theoretical" ones, are release blockers. If you find
   one, say so immediately rather than shipping around it.
@@ -169,7 +169,7 @@ exact layout.
 
 ## Review and merging
 
-- CI must be green, including the fail-closed `merge-gate` job — a job that
+- CI must be green, including the fail-closed `merge-gate` job. A job that
   fails or times out blocks the merge, it never waves one through.
 - Review comments are addressed with follow-up commits on the same branch, not
   by rewriting pushed history.
