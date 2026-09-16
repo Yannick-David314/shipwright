@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-context_bar.py --- compact readout of context fullness and the active model
+context_bar.py --- compact readout of context fullness, the model and the mode
 
 Contains:
     RING_GLYPHS: the fill states the context ring cycles through
     WARN_AT / CRITICAL_AT: fractions at which the ring changes colour
+    MODE_SWITCH_HINT: the key named beside the permission mode
     ring_for(): picks the glyph representing one fullness fraction
     ContextBar: the bar drawn under the composer
     ContextBar.set_usage(): records how full the context is
     ContextBar.set_model(): records which model is answering
-    ContextBar.render_text(): renders the ring, the percentage, and the model
+    ContextBar.set_mode(): records which permission mode is in force
+    ContextBar.render_text(): renders the ring, the percentage, the model and the mode
 """
 
 from textual.widgets import Static
@@ -19,6 +21,7 @@ from tui.theme import Palette, palette_for
 RING_GLYPHS = ("○", "◔", "◑", "◕", "●")
 WARN_AT = 0.70
 CRITICAL_AT = 0.90
+MODE_SWITCH_HINT = "shift+tab"
 
 
 def ring_for(usage: float) -> str:
@@ -41,19 +44,24 @@ class ContextBar(Static):
     Attributes:
         usage: How full the working context is, between 0 and 1.
         model_label: Model currently answering.
+        mode_label: Permission mode in force, empty to leave it out.
         palette: Colours the bar draws from.
     """
 
-    def __init__(self, model_label: str = "", palette: Palette | None = None) -> None:
+    def __init__(
+        self, model_label: str = "", palette: Palette | None = None, mode_label: str = ""
+    ) -> None:
         """Builds the bar for one model, showing an empty context.
 
         Args:
             model_label: Model currently answering.
             palette: Colours to draw from; detected from the terminal when None.
+            mode_label: Permission mode in force, empty to leave it out.
         """
         super().__init__()
         self.usage = 0.0
         self.model_label = model_label
+        self.mode_label = mode_label
         self.palette: Palette = palette_for() if palette is None else palette
 
     def colour_for_usage(self) -> str:
@@ -78,6 +86,8 @@ class ContextBar(Static):
         parts = [f"{ring_for(self.usage)} {percent}% context"]
         if self.model_label:
             parts.append(self.model_label)
+        if self.mode_label:
+            parts.append(f"{self.mode_label} · {MODE_SWITCH_HINT}")
         return "   ".join(parts)
 
     def set_usage(self, usage: float) -> None:
@@ -97,4 +107,13 @@ class ContextBar(Static):
             model_label: Model currently answering.
         """
         self.model_label = model_label
+        self.update(self.render_text())
+
+    def set_mode(self, mode_label: str) -> None:
+        """Records which permission mode is in force and repaints.
+
+        Args:
+            mode_label: Permission mode in force.
+        """
+        self.mode_label = mode_label
         self.update(self.render_text())

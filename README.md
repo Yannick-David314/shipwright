@@ -89,6 +89,7 @@ permissions. It never asks again.
 | `ship PATH` | Open it on another directory (`.`, `..`, relative or absolute) |
 | `ship-update` | Rebuild from the latest source |
 | `ship --setup` | Change provider or API key |
+| `ship --mode bypass` | Start in a permission mode (`manual`, `edit`, `plan`, `bypass`) |
 | `ship-uninstall` | Remove shipwright |
 
 ### Update
@@ -305,7 +306,8 @@ background process, so it attaches to the same gateway (`:4000`) the CLI uses.
 
 Once it is open:
 
-1. The header shows the checkout, its branch, the provider, and live spend.
+1. The line under the composer shows how full the context is, the model, and
+   the permission mode.
 2. Type what the agent should do and press Enter. Anything typed while a run is
    in flight is queued and starts when the agent frees up.
 3. Slash commands adjust the run without restarting it:
@@ -313,11 +315,38 @@ Once it is open:
 | Command | What it does |
 | ------- | ------------ |
 | `/plan` | Propose steps and wait for an explicit accept before running them |
+| `/mode [manual\|edit\|plan\|bypass]` | List permission modes, or switch to one |
 | `/resume <transcript>` | Reload a prior run as dimmed, completed rows |
-| `/model <provider> [model]` | Switch provider or model mid-run |
+| `/model [model]` | List models, or switch model mid-run |
 | `/max-cost <usd>` | Raise or lower the run's spend ceiling live |
 | `/max-steps <n>` | Raise or lower the run's iteration ceiling live |
 | `/setup` | Change provider or API key without restarting |
+
+#### Permission modes
+
+The mode decides what the agent may do before it asks you. Press `shift+tab`
+to cycle through them, use `/mode`, or start in one with `ship --mode <mode>`.
+The current mode is shown under the composer.
+
+| Mode | Edits | Commands |
+| ---- | ----- | -------- |
+| `manual` (default) | asks | asks |
+| `edit automatically` | runs | asks |
+| `plan` | proposes a plan to accept first, then runs | asks |
+| `bypass permissions` | runs | runs |
+
+Reading files, listing directories and diffing never ask. When the agent asks,
+the prompt shows the proposed change in red and green, or the command, with
+three answers:
+
+| Key | Answer |
+| --- | ------ |
+| `y` | Approve: the call runs |
+| `n` / `esc` | Deny: the call does not run |
+| `o` | Other: type what the agent should do instead; it gets your text in place of the call |
+
+A command that reaches outside the directory `ship` was opened on asks in every
+mode, bypass included.
 
 `NO_COLOR` or a `TERM` the terminal reports as colourless drops the interface to
 a monochrome layout rather than printing escape codes.

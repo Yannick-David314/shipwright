@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_OUTPUT_CHARS = 6000
 MAX_ECHOED_ARG_CHARS = 200
 TOOL_ERROR_PREFIX = "error: "
+DECLINED_NOTE = (
+    "the operator declined this {tool} call. Do not retry it unchanged: ask what "
+    "they want instead, or take a different approach."
+)
+REDIRECTED_NOTE = (
+    "the operator did not run this {tool} call and asked for this instead: {suggestion}"
+)
 TRANSCRIPT_TOKEN_BUDGET = 28000
 CHARS_PER_TOKEN_ESTIMATE = 4
 STEP_BUDGET_TOKENS = 6000
@@ -262,6 +269,8 @@ class AgentConfig:
         planner: Planner used when mode is "plan_execute".
         plan_gate: Asked to approve a plan before any of its steps run.
         escape_gate: Asked before a command may reach outside the checkout.
+        tool_gate: Asked before each tool call. True runs it; False declines it;
+            text declines it and passes the operator's suggestion to the model.
         history: Earlier turns of the session, replayed before this task.
         breaker: Iteration and spend ceilings that halt a runaway run.
         cost_tracker: Optional tracker accumulating the run's model spend.
@@ -277,6 +286,7 @@ class AgentConfig:
     planner: RepoPlanner | None = None
     plan_gate: Callable[[Plan], bool] | None = None
     escape_gate: Callable[[str, str], bool] | None = None
+    tool_gate: Callable[[str, dict[str, str]], bool | str] | None = None
     history: list[Message] = field(default_factory=list)
     breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
     cost_tracker: CostTracker | None = None
@@ -499,6 +509,15 @@ class AgentLoop:
         Returns:
             output: Tool output, truncated to the per-step budget.
         """
+        gate = self.config.tool_gate
+        decision = True if gate is None else gate(step.tool_name, step.tool_args)
+        if isinstance(decision, str):
+            logger.info("run %s: %s redirected by the operator", self._run_id, step.tool_name)
+            note = REDIRECTED_NOTE.format(tool=step.tool_name, suggestion=decision.strip())
+            return f"{TOOL_ERROR_PREFIX}{note}"
+        if not decision:
+            logger.info("run %s: %s declined by the operator", self._run_id, step.tool_name)
+            return f"{TOOL_ERROR_PREFIX}{DECLINED_NOTE.format(tool=step.tool_name)}"
         result = self._dispatcher.dispatch(step.tool_name, step.tool_args)
         signature = (step.tool_name, str(sorted(step.tool_args.items())))
         if result.ok:

@@ -12,6 +12,7 @@ Contains:
     ShipwrightApp.open_setup(): re-runs onboarding on demand
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
+    ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
     ShipwrightApp.on_composer_submitted(): routes a submitted line
     ShipwrightApp.handle_line(): runs a command or starts a turn
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
@@ -22,10 +23,19 @@ Contains:
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
     ShipwrightApp.switch_provider(): points later runs at another provider or model
     ShipwrightApp.describe_models(): lists the models the provider serves
+    ShipwrightApp.mode_label(): the permission mode shown under the composer
+    ShipwrightApp.set_permission_mode(): switches mode and shows it
+    ShipwrightApp.mode_command(): lists the modes, or switches to the one named
+    ShipwrightApp.action_cycle_mode(): moves to the next mode on shift+tab
     ShipwrightApp.model_label(): the model shown under the composer
     ShipwrightApp.refresh_context_bar(): updates fullness and model readout
     ShipwrightApp.toggle_plan_mode(): turns plan-then-execute on and off
     ShipwrightApp.approve_plan(): shows a proposed plan and waits for an answer
+    ShipwrightApp.tool_gate(): the gate a run asks before each tool call
+    ShipwrightApp.approve_tool(): asks about one tool call and waits for an answer
+    ShipwrightApp.approve_escape(): asks before a command leaves the working directory
+    ShipwrightApp.show_approval_panel(): mounts an approval panel and focuses it
+    ShipwrightApp.on_approval_panel_decided(): returns the keyboard to the composer
     ShipwrightApp.show_plan_panel(): mounts a plan panel and focuses it
     ShipwrightApp.on_setup_panel_saved(): dismisses onboarding once a key is stored
     ShipwrightApp.on_setup_panel_skipped(): dismisses onboarding when declined
@@ -55,6 +65,15 @@ from agent.llm_client import (
 )
 from agent.llm_client import Message as LoopMessage
 from agent.loop import AgentConfig, AgentLoop, Step
+from agent.permissions import (
+    MODE_DESCRIPTIONS,
+    MODE_ORDER,
+    PermissionMode,
+    ToolGate,
+    gate_for,
+    next_mode,
+    parse_mode,
+)
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
@@ -71,6 +90,7 @@ from tui.screens.footer import FooterBar
 from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
 from tui.transcript import resume
+from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
 from tui.widgets.context_bar import ContextBar
 from tui.widgets.plan_panel import PlanPanel
 from tui.widgets.robot import Phase, Robot, StatusLine, phase_for_tool
@@ -93,8 +113,15 @@ SETUP_REOPENED = "pick a provider and paste a key; enter to save, esc to cancel"
 HISTORY_TURN_LIMIT = 12
 HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
+USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
+MODE_MARKERS: dict[PermissionMode, str] = {
+    PermissionMode.MANUAL: "⏸",
+    PermissionMode.EDIT_AUTOMATICALLY: "⏵⏵",
+    PermissionMode.PLAN: "⏸",
+    PermissionMode.BYPASS: "⏵⏵",
+}
 PLAN_ON_NOTICE = "plan mode on — runs propose steps and wait for [a] to accept"
-PLAN_OFF_NOTICE = "plan mode off — runs execute directly"
+PLAN_OFF_NOTICE = "plan mode off — manual"
 SETUP_DONE_TEMPLATE = "{env_var} saved — you are ready to go"
 SETUP_SKIPPED_NOTICE = "setup skipped — set a provider key before starting a run"
 # The four regions, in the order they are composed down the screen.
@@ -154,6 +181,11 @@ class ShipwrightApp(App[None]):
         height: 1fr;
         padding: 0 2;
     }
+    .notice {
+        height: auto;
+        margin-top: 1;
+        color: $text-muted;
+    }
     .instruction {
         height: auto;
         margin-top: 1;
@@ -180,6 +212,8 @@ class ShipwrightApp(App[None]):
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+l", "screenshot", "Screenshot"),
+        # Priority, so the composer's own focus handling never swallows it.
+        Binding("shift+tab", "cycle_mode", "Mode", priority=True),
     ]
 
     def __init__(
@@ -190,6 +224,7 @@ class ShipwrightApp(App[None]):
         cost_tracker: CostTracker | None = None,
         palette: Palette | None = None,
         force_setup: bool = False,
+        permission_mode: PermissionMode = PermissionMode.MANUAL,
     ) -> None:
         """Builds the interface for one checkout.
 
@@ -200,6 +235,7 @@ class ShipwrightApp(App[None]):
             cost_tracker: Tracker the header's cost readout is drawn from.
             palette: Colours to render with; detected from the terminal when None.
             force_setup: Show onboarding even when a credential is already set.
+            permission_mode: How much the agent may do before it asks.
         """
         # Textual resolves CSS variables inside App.__init__, so the palette has
         # to exist before the base class is initialised.
@@ -213,7 +249,7 @@ class ShipwrightApp(App[None]):
         self.breaker = CircuitBreaker()
         self.router = CommandRouter()
         self.model: str | None = None
-        self.plan_mode = False
+        self.permission_mode = permission_mode
         self.active_loop: AgentLoop | None = None
         self.credential_verifier: Callable[[Provider, str], Verification] | None = None
         self.conversation: list[LoopMessage] = []
@@ -274,7 +310,7 @@ class ShipwrightApp(App[None]):
         composer.id = REGION_IDS[2]
         yield composer
 
-        context = ContextBar(self.model_label(), palette=self.palette)
+        context = ContextBar(self.model_label(), palette=self.palette, mode_label=self.mode_label())
         context.id = "region-context"
         yield context
 
@@ -296,6 +332,7 @@ class ShipwrightApp(App[None]):
         self.router.register("resume", resume)
         self.router.register("model", self.switch_provider)
         self.router.register("plan", self.toggle_plan_mode)
+        self.router.register("mode", self.mode_command)
         self.router.register("setup", self.open_setup)
 
     def on_mount(self) -> None:
@@ -324,9 +361,24 @@ class ShipwrightApp(App[None]):
         except UnknownCommandError as exc:
             return f"unknown command: /{exc}"
         if routed is not None:
+            self.show_notice(routed)
             return routed
         self.start_turn_for(text)
         return text
+
+    def show_notice(self, notice: str) -> None:
+        """Writes a slash command's reply into the transcript.
+
+        Args:
+            notice: Reply to show; nothing is drawn when it is empty.
+        """
+        if not notice:
+            return
+        self.query_one("#region-hero").display = False
+        timeline = self.query_one(Timeline)
+        timeline.display = True
+        timeline.mount(Static(Text(notice), classes="notice"))
+        timeline.scroll_end(animate=False)
 
     def start_turn_for(self, instruction: str) -> None:
         """Opens a turn for one instruction and hands it to the agent.
@@ -365,6 +417,8 @@ class ShipwrightApp(App[None]):
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
+        config.tool_gate = self.tool_gate()
+        config.escape_gate = self.approve_escape
         client = build_client(Provider(self.provider), self.model)
         if self.plan_mode:
             config.mode = "plan_execute"
@@ -452,6 +506,75 @@ class ShipwrightApp(App[None]):
         ]
         return "   ".join(names)
 
+    @property
+    def plan_mode(self) -> bool:
+        """Reports whether runs propose a plan before executing.
+
+        Returns:
+            plan_mode: True while the permission mode is plan.
+        """
+        return self.permission_mode is PermissionMode.PLAN
+
+    def tool_gate(self) -> ToolGate:
+        """Builds the gate a run asks before each tool call.
+
+        Returns:
+            gate: Checks the mode in force at call time and asks when it must.
+        """
+        return gate_for(lambda: self.permission_mode, self.approve_tool)
+
+    def approve_tool(self, tool_name: str, tool_args: dict[str, str]) -> bool | str:
+        """Asks the operator about one tool call and blocks the run until answered.
+
+        Runs on the worker thread, so the panel is mounted through the UI
+        thread and the worker parks on the panel's own decision event.
+
+        Args:
+            tool_name: Tool the agent wants to call.
+            tool_args: Arguments it would be called with.
+
+        Returns:
+            decision: True when approved, the operator's suggestion, or False.
+        """
+        panel = ApprovalPanel(tool_name, tool_args, palette=self.palette)
+        self.call_from_thread(self.show_approval_panel, panel)
+        return panel.wait_for_decision(PLAN_DECISION_TIMEOUT_S)
+
+    def approve_escape(self, command: str, reason: str) -> bool:
+        """Asks before a command reaches outside the working directory.
+
+        Asked in every mode, bypass included: the directory ship was opened
+        on is the boundary, and only the operator moves it.
+
+        Args:
+            command: Shell command the agent wants to run.
+            reason: Which path leaves the directory, and why.
+
+        Returns:
+            is_approved: True only for an explicit approval; a suggestion declines.
+        """
+        return self.approve_tool(ESCAPE_TOOL, {"command": command, "reason": reason}) is True
+
+    def show_approval_panel(self, panel: ApprovalPanel) -> None:
+        """Mounts an approval panel at the end of the transcript and focuses it.
+
+        Args:
+            panel: Panel awaiting the operator's decision.
+        """
+        timeline = self.query_one(Timeline)
+        timeline.mount(panel)
+        timeline.scroll_end(animate=False)
+        panel.focus()
+
+    def on_approval_panel_decided(self, event: ApprovalPanel.Decided) -> None:
+        """Hands the keyboard back to the composer once a call is answered.
+
+        Args:
+            event: Message carrying the decision.
+        """
+        event.stop()
+        self.query_one(Composer).focus_input()
+
     def toggle_plan_mode(self, argument: str) -> str:
         """Turns plan-then-execute on and off for later runs.
 
@@ -462,7 +585,7 @@ class ShipwrightApp(App[None]):
             line: Which mode later runs will use.
         """
         del argument
-        self.plan_mode = not self.plan_mode
+        self.set_permission_mode(PermissionMode.MANUAL if self.plan_mode else PermissionMode.PLAN)
         return PLAN_ON_NOTICE if self.plan_mode else PLAN_OFF_NOTICE
 
     def approve_plan(self, plan: Plan) -> bool:
@@ -551,6 +674,50 @@ class ShipwrightApp(App[None]):
         panel.id = "region-setup"
         self.mount(panel, before=self.query_one(Timeline))
         return SETUP_REOPENED
+
+    def mode_label(self) -> str:
+        """Renders the permission mode as the bar under the composer shows it.
+
+        Returns:
+            label: A marker and the mode's name.
+        """
+        return f"{MODE_MARKERS[self.permission_mode]} {self.permission_mode.value}"
+
+    def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Switches the permission mode and shows it under the composer.
+
+        A run in flight picks the new mode up at its next tool call.
+
+        Args:
+            mode: Mode to switch to.
+        """
+        self.permission_mode = mode
+        self.query_one(ContextBar).set_mode(self.mode_label())
+
+    def mode_command(self, argument: str) -> str:
+        """Lists the permission modes, or switches to the one named.
+
+        Args:
+            argument: Mode name or alias; empty to list the modes.
+
+        Returns:
+            line: The modes with the active one marked, the new mode, or usage.
+        """
+        if not argument.strip():
+            return "\n".join(
+                f"{'*' if mode is self.permission_mode else ' '} {mode.value:<20} "
+                f"{MODE_DESCRIPTIONS[mode]}"
+                for mode in MODE_ORDER
+            )
+        mode = parse_mode(argument)
+        if mode is None:
+            return USAGE_MODE
+        self.set_permission_mode(mode)
+        return f"{mode.value}: {MODE_DESCRIPTIONS[mode]}"
+
+    def action_cycle_mode(self) -> None:
+        """Moves to the next permission mode, as shift+tab does in the composer."""
+        self.set_permission_mode(next_mode(self.permission_mode))
 
     def model_label(self) -> str:
         """Renders the model currently answering.
