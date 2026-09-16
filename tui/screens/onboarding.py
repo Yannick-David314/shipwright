@@ -120,7 +120,9 @@ class OnboardingScreen(Screen[None]):
         repo_path: Checkout whose .env file the key is written to.
         offered: Providers the setup card lists; detected when None.
         verifier: Proves a key works; injected so tests need no provider.
-        show_terms: Whether the terms come before provider setup.
+        show_terms: Whether this is first-run onboarding: the welcome heading
+            and the terms come before provider setup. Re-running setup shows
+            only the provider card.
     """
 
     DEFAULT_CSS = """
@@ -175,7 +177,8 @@ class OnboardingScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         """Lays out the heading and whichever card comes first."""
         with Vertical(id="onboarding"):
-            yield Wordmark(id="welcome-mark", words=WELCOME_LINE)
+            if self.show_terms:
+                yield Wordmark(id="welcome-mark", words=WELCOME_LINE)
             with Center(id="onboarding-card"):
                 yield TermsCard() if self.show_terms else self.build_setup()
 
@@ -185,7 +188,10 @@ class OnboardingScreen(Screen[None]):
         Args:
             event: The screen's new size.
         """
-        mark = self.query_one("#welcome-mark", Wordmark)
+        marks = self.query("#welcome-mark").results(Wordmark)
+        mark = next(marks, None)
+        if mark is None:
+            return
         width, height = event.size.width, event.size.height
         if width >= block_width(WELCOME_LINE) + MARK_MARGIN and height >= LINE_MIN_HEIGHT:
             mark.words = WELCOME_LINE

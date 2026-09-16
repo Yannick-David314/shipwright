@@ -17,6 +17,7 @@ Contains:
     test_unreachable_provider_still_stores_the_key(): offline does not re-prompt
     test_force_setup_reopens_onboarding(): --setup asks again despite a stored key
     test_setup_command_reopens_onboarding(): /setup asks again mid-session
+    test_rerunning_setup_shows_only_the_provider_card(): no welcome, no terms
     test_setup_offers_configured_providers_too(): switching provider is possible
     test_terms_have_no_em_dashes_or_colons(): the paragraph reads as plain prose
     test_heading_fits_the_window(): one line when wide, two when narrower, none when tiny
@@ -364,3 +365,27 @@ def test_heading_fits_the_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert asyncio.run(_run((140, 40))) == (True, WELCOME_LINE)
     assert asyncio.run(_run((90, 40))) == (True, WELCOME_WORDS)
     assert asyncio.run(_run((80, 24)))[0] is False
+
+
+def test_rerunning_setup_shows_only_the_provider_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts /setup and --setup skip the welcome heading and the terms."""
+    _keyless(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-already-configured")
+
+    async def _run(app: ShipwrightApp, command: bool) -> tuple[int, int, int]:
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            if command:
+                app.handle_line("/setup")
+                await pilot.pause()
+            screen = app.screen
+            return (
+                len(screen.query("#welcome-mark")),
+                len(screen.query(TermsCard)),
+                len(screen.query(SetupPanel)),
+            )
+
+    assert asyncio.run(_run(ShipwrightApp(tmp_path), command=True)) == (0, 0, 1)
+    assert asyncio.run(_run(ShipwrightApp(tmp_path, force_setup=True), command=False)) == (0, 0, 1)
