@@ -186,7 +186,7 @@ class ShipwrightApp(App[None]):
     #region-status {
         height: 1;
         padding: 0 2;
-        color: $accent;
+        color: $activity;
     }
     #region-composer {
         height: 3;

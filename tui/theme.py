@@ -38,6 +38,7 @@ class Palette:
         border_subtle: Border color for low-emphasis separators.
         highlight: Second colour, for body text that should stand apart from the blue.
         caution: Warm colour for notices the reader should stop at, such as a disclaimer.
+        activity: Colour of the line showing that a run is working.
     """
 
     background: str
@@ -52,6 +53,7 @@ class Palette:
     border_subtle: str
     highlight: str
     caution: str
+    activity: str
 
 
 # Sampled from docs/media/wordmark.png, and the same blue the README badges use.
@@ -70,6 +72,7 @@ DARK = Palette(
     border_subtle="#1c4f8f",
     highlight="#2ec4b6",
     caution="#e3b341",
+    activity="#d2a8ff",
 )
 
 
@@ -86,6 +89,7 @@ MONOCHROME = Palette(
     border_subtle="",
     highlight="",
     caution="",
+    activity="",
 )
 COLORLESS_TERMS = frozenset({"", "dumb", "unknown"})
 
@@ -147,11 +151,13 @@ CSS_VARIABLE_NAMES: dict[str, str] = {
     "border-subtle": "border_subtle",
     "secondary": "highlight",
     "caution": "caution",
+    "activity": "activity",
 }
 # Tokens Textual does not define itself, and the built-in token each borrows
 # when the palette leaves it blank, so a colourless terminal still parses.
 TOKEN_FALLBACKS: dict[str, str] = {
     "caution": "warning",
+    "activity": "accent",
 }
 
 

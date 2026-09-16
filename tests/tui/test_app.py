@@ -12,6 +12,7 @@ Contains:
     test_blank_line_starts_nothing(): whitespace never opens a turn
     test_palette_reaches_textual_tokens(): the project palette themes the app
     test_chat_box_border_is_the_wordmark_blue(): focused or not, the box is brand blue
+    test_working_line_has_its_own_colour(): the status line is not the blue
 """
 
 import asyncio
@@ -155,3 +156,19 @@ def test_chat_box_border_is_the_wordmark_blue(
             return [focused, box.styles.border_top[1]]
 
     assert asyncio.run(_borders()) == [Color.parse(BRAND_BLUE)] * 2
+
+
+def test_working_line_has_its_own_colour(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asserts the working indicator is drawn in the activity colour, not the blue."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-configured")
+
+    async def _colour() -> Color:
+        app = _app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            return app.query_one("#region-status").styles.color
+
+    colour = asyncio.run(_colour())
+
+    assert colour == Color.parse(DARK.activity)
+    assert colour != Color.parse(BRAND_BLUE)
