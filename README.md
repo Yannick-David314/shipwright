@@ -120,7 +120,7 @@ interface.
 If the launcher is gone but the install directory is not:
 
 ```bash
-sh ~/.local/share/shipwright/install.sh uninstall
+sh ~/.local/share/shipwright/src/install.sh uninstall
 ```
 
 ## How you use it

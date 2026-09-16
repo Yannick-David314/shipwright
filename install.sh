@@ -386,7 +386,6 @@ else
     fi
 fi
 ok "Checked out $(git -C "$SRC_DIR" rev-parse --short HEAD)"
-cp "$0" "$INSTALL_HOME/install.sh" 2>/dev/null || true
 
 # --- image -------------------------------------------------------------------
 
@@ -504,11 +503,19 @@ sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
 ok "Setting up ship"
 
-printf '#!/bin/sh\nexec sh "%s/install.sh" update\n' "$INSTALL_HOME" > "$BIN_DIR/ship-update"
+# Update fetches first and then runs the installer it fetched, so an update is
+# carried out by the new version's own steps rather than the ones installed.
+cat > "$BIN_DIR/ship-update" <<UPDATER
+#!/bin/sh
+set -e
+git -C "$SRC_DIR" fetch --quiet --depth 1 origin "$REF"
+git -C "$SRC_DIR" checkout --quiet FETCH_HEAD
+exec sh "$SRC_DIR/install.sh" update
+UPDATER
 chmod +x "$BIN_DIR/ship-update"
 ok "Setting up ship-update"
 
-printf '#!/bin/sh\nexec sh "%s/install.sh" uninstall\n' "$INSTALL_HOME" > "$BIN_DIR/ship-uninstall"
+printf '#!/bin/sh\nexec sh "%s/install.sh" uninstall\n' "$SRC_DIR" > "$BIN_DIR/ship-uninstall"
 chmod +x "$BIN_DIR/ship-uninstall"
 ok "Setting up ship-uninstall"
 
