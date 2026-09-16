@@ -3,6 +3,7 @@
 onboarding.py --- first-run screen: welcome, terms, provider, key
 
 Contains:
+    TERMS_TITLE: the bold title above the terms
     TERMS_TEXT: the one-paragraph terms shown before setup
     ACCEPT_LABEL: the label on the button accepting them
     LINE_MIN_HEIGHT / MARK_MIN_HEIGHT / MARK_MARGIN: the room each heading needs
@@ -29,6 +30,7 @@ from agent.llm_client import Provider
 from tui.widgets.setup_panel import CredentialStatus, SetupPanel, Verification
 from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark, block_width
 
+TERMS_TITLE = "Terms and Conditions"
 ACCEPT_LABEL = "Accept and continue"
 # Rows the window needs to hold the one-line (5 row) or two-line (11 row)
 # heading above a card, and the columns kept free either side of it.
@@ -64,8 +66,13 @@ class TermsCard(Vertical):
         max-width: 100%;
         height: auto;
     }
-    TermsCard #terms-text {
+    TermsCard #terms-title {
         color: $accent;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    TermsCard #terms-text {
+        color: $secondary;
         margin-bottom: 1;
     }
     TermsCard Center {
@@ -78,7 +85,8 @@ class TermsCard(Vertical):
     """
 
     def compose(self) -> ComposeResult:
-        """Lays out the terms paragraph above the accept button."""
+        """Lays out the title, the terms paragraph, and the accept button."""
+        yield Static(TERMS_TITLE, id="terms-title")
         yield Static(TERMS_TEXT, id="terms-text")
         with Center():
             yield Button(ACCEPT_LABEL, id=ACCEPT_BUTTON_ID, variant="primary", compact=True)
