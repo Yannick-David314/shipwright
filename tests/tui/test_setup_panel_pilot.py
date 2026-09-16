@@ -9,6 +9,7 @@ Contains:
     test_key_field_waits_for_a_provider(): the key stage opens only after a choice
     test_dropdown_lists_product_names_only(): no identifiers or model names shown
     test_heading_stands_apart_from_the_options(): bold, underlined, own colour
+    test_skip_highlights_on_hover(): the pointer shows what it is over
 """
 
 import asyncio
@@ -135,3 +136,22 @@ def test_heading_stands_apart_from_the_options(keyless_repo: Path) -> None:
             return str(heading.render()), style.bold, style.underline, different
 
     assert asyncio.run(drive()) == ("Select your inference provider", True, True, True)
+
+
+def test_skip_highlights_on_hover(keyless_repo: Path) -> None:
+    """Asserts hovering Skip for now changes its background and weight."""
+
+    async def drive() -> tuple[object, object, bool]:
+        app = SetupHarness(keyless_repo)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            skip = app.query_one("#setup-skip")
+            before = skip.styles.background
+            await pilot.hover("#setup-skip")
+            await pilot.pause()
+            return before, skip.styles.background, skip.styles.text_style.bold
+
+    before, after, bold = asyncio.run(drive())
+
+    assert before != after
+    assert bold

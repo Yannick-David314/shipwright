@@ -82,6 +82,10 @@ class TermsCard(Vertical):
         min-width: 0;
         width: auto;
     }
+    TermsCard Button:hover {
+        background: $secondary;
+        text-style: bold;
+    }
     """
 
     def compose(self) -> ComposeResult:

@@ -304,8 +304,19 @@ class SetupPanel(Static):
         margin-bottom: 1;
     }
     SetupPanel Select { margin-bottom: 1; }
+    SetupPanel SelectCurrent:hover { border: tall $accent; }
+    SetupPanel SelectOverlay > .option-list--option-hover {
+        background: $accent 40%;
+        color: $text;
+        text-style: bold;
+    }
+    SetupPanel SelectOverlay > .option-list--option-highlighted {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
     SetupPanel #setup-skip { width: 100%; }
-
+    SetupPanel #setup-skip:hover { background: $accent 40%; text-style: bold; }
     SetupPanel .setup-status { color: $accent; }
     SetupPanel .key-stage { display: none; }
     SetupPanel.choosing-key .provider-stage { display: none; }
