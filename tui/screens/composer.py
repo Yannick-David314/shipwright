@@ -27,8 +27,8 @@ from agent.repo_map import RepoMap
 INPUT_ID = "composer-input"
 QUEUED_NOTICE = "queued"
 SENT_NOTICE = "sent"
-IDLE_PROMPT = "what should the agent do?"
-BUSY_PROMPT = "run in flight — this will queue"
+IDLE_PROMPT = "Queue a message"
+BUSY_PROMPT = "Queue a message for when this run finishes"
 
 
 class Composer(Static):
