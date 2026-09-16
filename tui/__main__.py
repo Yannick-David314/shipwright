@@ -3,6 +3,7 @@
 __main__.py --- console entrypoint that opens the terminal interface
 
 Contains:
+    _permission_mode(): reads --mode, failing at parse time on a typo
     build_parser(): builds the argument parser for the ship command
     resolve_workspace(): turns a typed path into the directory to work on
     provider_choices(): the provider names the entrypoint accepts
@@ -18,6 +19,7 @@ from agent import __version__
 from agent.cost_tracker import CostTracker
 from agent.env_file import load_env_file
 from agent.llm_client import Provider
+from agent.permissions import PermissionMode, parse_mode
 from tui.app import DEFAULT_GATEWAY_URL, ShipwrightApp
 
 EXIT_OK = 0
@@ -30,6 +32,24 @@ def provider_choices() -> list[str]:
         choices: Provider values, matching the ones the CLI accepts.
     """
     return [provider.value for provider in Provider]
+
+
+def _permission_mode(name: str) -> PermissionMode:
+    """Reads --mode, so a typo fails at parse time with the valid names.
+
+    Args:
+        name: Mode name or alias as typed.
+
+    Returns:
+        mode: The matching permission mode.
+
+    Raises:
+        argparse.ArgumentTypeError: The name is not a mode.
+    """
+    mode = parse_mode(name)
+    if mode is None:
+        raise argparse.ArgumentTypeError(f"unknown mode {name!r}: use manual, edit, plan or bypass")
+    return mode
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +77,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PROVIDER",
         default=Provider.ANTHROPIC.value,
         help="model provider to run the loop with",
+    )
+    parser.add_argument(
+        "--mode",
+        type=_permission_mode,
+        default=PermissionMode.MANUAL,
+        metavar="MODE",
+        help="start in manual (default), edit, plan, or bypass",
     )
     parser.add_argument(
         "--setup",
@@ -116,6 +143,7 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
         gateway_url=args.gateway,
         cost_tracker=CostTracker(),
         force_setup=args.setup,
+        permission_mode=args.mode,
     )
 
 

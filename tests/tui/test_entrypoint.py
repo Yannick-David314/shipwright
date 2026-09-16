@@ -12,6 +12,8 @@ Contains:
     test_path_and_repo_disagreeing_is_rejected(): the directory is given once
     test_provider_argument_is_honoured(): --provider selects the backend
     test_unknown_provider_is_rejected(): a bad provider fails at parse time
+    test_mode_argument_is_honoured(): --mode picks the starting permission mode
+    test_unknown_mode_is_rejected(): a bad mode fails at parse time
     test_cli_exposes_a_tui_flag(): shipwright --tui is a real flag
 """
 
@@ -20,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from agent.cli import build_parser as build_cli_parser
+from agent.permissions import PermissionMode
 from tui.__main__ import build_app, build_parser
 
 
@@ -104,3 +107,16 @@ def test_cli_exposes_a_tui_flag() -> None:
     args = build_cli_parser().parse_args(["--tui"])
 
     assert args.tui is True
+
+
+def test_mode_argument_is_honoured() -> None:
+    """Asserts --mode sets the permission mode the app starts in, manual by default."""
+    assert build_app([]).permission_mode is PermissionMode.MANUAL
+    assert build_app(["--mode", "bypass"]).permission_mode is PermissionMode.BYPASS
+    assert build_app(["--mode=edit"]).permission_mode is PermissionMode.EDIT_AUTOMATICALLY
+
+
+def test_unknown_mode_is_rejected() -> None:
+    """Asserts an unknown mode is refused at parse time."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--mode", "yolo"])
