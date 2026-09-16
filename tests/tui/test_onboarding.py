@@ -5,7 +5,7 @@ test_onboarding.py --- covers the first-run welcome, terms, provider and key flo
 Contains:
     _keyless(): clears every provider credential from the environment
     test_first_run_opens_with_the_welcome_and_terms(): terms come before setup
-    test_terms_carry_a_title_above_the_text(): a bold title heads the paragraph
+    test_terms_carry_a_title_above_the_text(): a bold Disclaimer! heads the paragraph
     test_accepting_the_terms_opens_provider_setup(): the card swaps on accept
     test_panel_appears_with_no_key(): a fresh machine is asked to set up
     test_panel_offers_every_provider(): the operator picks which provider to use
@@ -34,7 +34,8 @@ from textual import events
 from agent.llm_client import CREDENTIAL_ENV_VARS
 from tui.app import ONBOARDED_MARKER, STATE_DIR_ENV, ShipwrightApp
 from tui.screens.composer import Composer
-from tui.screens.onboarding import TERMS_TEXT, TERMS_TITLE, OnboardingScreen, TermsCard
+from tui.screens.onboarding import TERMS_TEXT, OnboardingScreen, TermsCard
+from tui.theme import DARK
 from tui.widgets.setup_panel import SetupPanel, Verification
 from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark
 
@@ -141,27 +142,31 @@ def test_first_run_opens_with_the_welcome_and_terms(
 def test_terms_carry_a_title_above_the_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Asserts the terms card shows its bold title above the turquoise paragraph."""
+    """Asserts a bold Disclaimer! title, in its own colour, heads the paragraph."""
     _keyless(monkeypatch)
-    app = ShipwrightApp(tmp_path)
+    app = ShipwrightApp(tmp_path, palette=DARK)
 
-    async def _run() -> tuple[str, bool, int, int]:
+    async def _run() -> tuple[str, bool, int, int, bool]:
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
             title = app.screen.query_one("#terms-title")
             text = app.screen.query_one("#terms-text")
+            border = app.screen.query_one(TermsCard).styles.border_top[1]
+            colours = {title.styles.color, text.styles.color, border}
             return (
                 str(title.render()),
                 title.styles.text_style.bold,
                 title.region.y,
                 text.region.y,
+                len(colours) == 3,
             )
 
-    rendered, is_bold, title_y, text_y = asyncio.run(_run())
+    rendered, is_bold, title_y, text_y, all_distinct = asyncio.run(_run())
 
-    assert rendered == TERMS_TITLE
+    assert rendered == "Disclaimer!"
     assert is_bold
     assert title_y < text_y
+    assert all_distinct
 
 
 def test_accepting_the_terms_opens_provider_setup(

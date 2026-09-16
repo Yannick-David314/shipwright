@@ -30,7 +30,7 @@ from agent.llm_client import Provider
 from tui.widgets.setup_panel import CredentialStatus, SetupPanel, Verification
 from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark, block_width
 
-TERMS_TITLE = "Terms and Conditions"
+TERMS_TITLE = "Disclaimer!"
 ACCEPT_LABEL = "Accept and continue"
 # Rows the window needs to hold the one-line (5 row) or two-line (11 row)
 # heading above a card, and the columns kept free either side of it.
@@ -67,7 +67,7 @@ class TermsCard(Vertical):
         height: auto;
     }
     TermsCard #terms-title {
-        color: $accent;
+        color: $caution;
         text-style: bold;
         margin-bottom: 1;
     }
