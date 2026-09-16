@@ -418,7 +418,7 @@ while [ "$remaining" -gt 0 ]; do
             shift
             remaining=$((remaining - 1))
             ;;
-        --provider | --gateway | --mode)
+        --provider | --gateway | --mode | --resume)
             set -- "$@" "$arg"
             if [ "$remaining" -gt 0 ]; then
                 set -- "$@" "$1"
