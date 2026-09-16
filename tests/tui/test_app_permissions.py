@@ -13,6 +13,7 @@ Contains:
     test_bypass_never_asks(): nothing is asked in bypass
     test_shift_tab_cycles_modes_from_the_composer(): the key works while typing
     test_mode_command_lists_and_switches(): /mode lists, switches, and rejects junk
+    test_leaving_the_directory_is_asked_even_in_bypass(): the boundary always asks
 """
 
 import asyncio
@@ -64,6 +65,7 @@ class GatedApp(ShipwrightApp):
         config = AgentConfig(repo_path=str(self.repo_path), task=instruction)
         config.breaker = self.breaker
         config.tool_gate = self.tool_gate()
+        config.escape_gate = self.approve_escape
         return AgentLoop(ScriptedLLM(list(self.script)), config)
 
 
@@ -199,3 +201,13 @@ def test_mode_command_lists_and_switches(tmp_path: Path) -> None:
     assert refused == USAGE_MODE
     assert after_refusal is PermissionMode.EDIT_AUTOMATICALLY
     assert "edit automatically" in bar
+
+
+def test_leaving_the_directory_is_asked_even_in_bypass(tmp_path: Path) -> None:
+    """Asserts a command reaching outside the directory still asks in bypass."""
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    escape = ["Looking.\nAction: run_shell\ncommand=touch ../outside.txt", "FINAL: done"]
+
+    assert _run(workspace, escape, PermissionMode.BYPASS, "n") == (1, True)
+    assert not (tmp_path / "outside.txt").exists()

@@ -110,6 +110,9 @@ def proposal_lines(
             else:
                 styled.append((line, plain))
         return _preview(styled, palette)
+    if tool_name == ESCAPE_TOOL:
+        reason = tool_args.get("reason", "")
+        return [(tool_args.get("command", ""), plain), (reason, palette.hunk)]
     command = tool_args.get("command") or " ".join(tool_args.values())
     return [(line, plain) for line in command.splitlines()] or [("(no arguments)", palette.hunk)]
 

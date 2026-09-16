@@ -33,6 +33,7 @@ Contains:
     ShipwrightApp.approve_plan(): shows a proposed plan and waits for an answer
     ShipwrightApp.tool_gate(): the gate a run asks before each tool call
     ShipwrightApp.approve_tool(): asks about one tool call and waits for an answer
+    ShipwrightApp.approve_escape(): asks before a command leaves the working directory
     ShipwrightApp.show_approval_panel(): mounts an approval panel and focuses it
     ShipwrightApp.on_approval_panel_decided(): returns the keyboard to the composer
     ShipwrightApp.show_plan_panel(): mounts a plan panel and focuses it
@@ -89,7 +90,7 @@ from tui.screens.footer import FooterBar
 from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
 from tui.transcript import resume
-from tui.widgets.approval_panel import ApprovalPanel
+from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
 from tui.widgets.context_bar import ContextBar
 from tui.widgets.plan_panel import PlanPanel
 from tui.widgets.robot import Phase, Robot, StatusLine, phase_for_tool
@@ -417,6 +418,7 @@ class ShipwrightApp(App[None]):
         config.breaker = self.breaker
         config.history = list(self.conversation)
         config.tool_gate = self.tool_gate()
+        config.escape_gate = self.approve_escape
         client = build_client(Provider(self.provider), self.model)
         if self.plan_mode:
             config.mode = "plan_execute"
@@ -537,6 +539,21 @@ class ShipwrightApp(App[None]):
         panel = ApprovalPanel(tool_name, tool_args, palette=self.palette)
         self.call_from_thread(self.show_approval_panel, panel)
         return panel.wait_for_decision(PLAN_DECISION_TIMEOUT_S)
+
+    def approve_escape(self, command: str, reason: str) -> bool:
+        """Asks before a command reaches outside the working directory.
+
+        Asked in every mode, bypass included: the directory ship was opened
+        on is the boundary, and only the operator moves it.
+
+        Args:
+            command: Shell command the agent wants to run.
+            reason: Which path leaves the directory, and why.
+
+        Returns:
+            is_approved: True only for an explicit approval; a suggestion declines.
+        """
+        return self.approve_tool(ESCAPE_TOOL, {"command": command, "reason": reason}) is True
 
     def show_approval_panel(self, panel: ApprovalPanel) -> None:
         """Mounts an approval panel at the end of the transcript and focuses it.
