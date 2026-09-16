@@ -171,15 +171,6 @@ with_progress() {
 # Done in a subshell: a redirection failure on a special builtin kills the shell.
 have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
 
-# Defaults to yes, as apt does: uninstalling is meant to start afresh.
-confirm() {
-    have_tty || die "no terminal for confirmation. Download the script and run it: sh install.sh"
-    clear_bar
-    printf '%s [Y/n] ' "$1" > /dev/tty
-    read -r reply < /dev/tty
-    case "$reply" in [nN]*) return 1 ;; *) return 0 ;; esac
-}
-
 as_root() {
     if [ "$(id -u)" = "0" ]; then run "$@"; return; fi
     command -v sudo >/dev/null 2>&1 || die "sudo is required to install system packages"
@@ -219,20 +210,18 @@ if [ "$MODE" = "uninstall" ]; then
         | while read -r envfile; do
               grep -qE '^(export )?(ANTHROPIC|OPENAI)_API_KEY=.+' "$envfile" && echo "$envfile"
           done)
+    # Uninstalling means starting afresh, so every stored key goes, unasked.
+    # Only the provider key lines are removed; the rest of each file stays.
     if [ -n "$KEY_FILES" ]; then
-        say "The following files hold provider keys:"
-        echo "$KEY_FILES" | while read -r envfile; do say "  $envfile"; done
-        if confirm "Remove these provider keys?"; then
-            echo "$KEY_FILES" | while read -r envfile; do
-                sed -i -E '/^(export )?(ANTHROPIC|OPENAI)_API_KEY=/d' "$envfile"
-                if grep -qE '[^[:space:]]' "$envfile"; then
-                    say "Clearing keys from $envfile ..."
-                else
-                    rm -f "$envfile"
-                    say "Removing $envfile ..."
-                fi
-            done
-        fi
+        echo "$KEY_FILES" | while read -r envfile; do
+            sed -i -E '/^(export )?(ANTHROPIC|OPENAI)_API_KEY=/d' "$envfile"
+            if grep -qE '[^[:space:]]' "$envfile"; then
+                say "Clearing keys from $envfile ..."
+            else
+                rm -f "$envfile"
+                say "Removing $envfile ..."
+            fi
+        done
     fi
 
     finish
