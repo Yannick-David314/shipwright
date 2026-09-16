@@ -8,6 +8,7 @@ Contains:
     test_pasted_key_is_never_displayed(): the input masks what was typed
     test_key_field_waits_for_a_provider(): the key stage opens only after a choice
     test_dropdown_lists_product_names_only(): no identifiers or model names shown
+    test_heading_stands_apart_from_the_options(): bold, underlined, own colour
 """
 
 import asyncio
@@ -118,3 +119,19 @@ def test_dropdown_lists_product_names_only(keyless_repo: Path) -> None:
             return [str(prompt) for prompt, _ in select._options if _ is not Select.NULL]
 
     assert asyncio.run(drive()) == ["Anthropic"]
+
+
+def test_heading_stands_apart_from_the_options(keyless_repo: Path) -> None:
+    """Asserts the provider heading is bold, underlined and not the option colour."""
+
+    async def drive() -> tuple[str, bool, bool, bool]:
+        app = SetupHarness(keyless_repo)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            heading = app.query_one(".setup-heading")
+            style = heading.styles.text_style
+            label = app.query_one("SelectCurrent #label")
+            different = heading.styles.color != label.styles.color
+            return str(heading.render()), style.bold, style.underline, different
+
+    assert asyncio.run(drive()) == ("Select your inference provider", True, True, True)

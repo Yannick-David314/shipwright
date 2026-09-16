@@ -58,7 +58,7 @@ KEY_INPUT_ID = "setup-key"
 SKIP_BUTTON_ID = "setup-skip"
 PROVIDER_SELECT_ID = "setup-provider"
 STATUS_LABEL_ID = "setup-status"
-PROVIDER_PROMPT = "Select your model provider"
+PROVIDER_PROMPT = "Select your inference provider"
 SELECT_PLACEHOLDER = "Choose a provider"
 SKIP_LABEL = "Skip for now"
 KEY_PROMPT = "Paste your key"
@@ -296,9 +296,16 @@ class SetupPanel(Static):
         max-width: 100%;
         height: auto;
     }
-    SetupPanel .setup-heading { color: $accent; text-style: bold; margin-bottom: 1; }
+    /* The heading is turquoise, bold and underlined, so it cannot be mistaken
+       for one of the providers listed beneath it. */
+    SetupPanel .setup-heading {
+        color: $secondary;
+        text-style: bold underline;
+        margin-bottom: 1;
+    }
     SetupPanel Select { margin-bottom: 1; }
     SetupPanel #setup-skip { width: 100%; }
+
     SetupPanel .setup-status { color: $accent; }
     SetupPanel .key-stage { display: none; }
     SetupPanel.choosing-key .provider-stage { display: none; }
