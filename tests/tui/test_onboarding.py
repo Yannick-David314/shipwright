@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-test_onboarding.py --- covers the first-run provider-and-key flow
+test_onboarding.py --- covers the first-run welcome, terms, provider and key flow
 
 Contains:
     _keyless(): clears every provider credential from the environment
+    test_first_run_opens_with_the_welcome_and_terms(): terms come before setup
+    test_accepting_the_terms_opens_provider_setup(): the card swaps on accept
     test_panel_appears_with_no_key(): a fresh machine is asked to set up
     test_panel_offers_every_provider(): the operator picks which provider to use
     test_saving_dismisses_onboarding(): a verified key clears the panel
@@ -15,16 +17,19 @@ Contains:
     test_force_setup_reopens_onboarding(): --setup asks again despite a stored key
     test_setup_command_reopens_onboarding(): /setup asks again mid-session
     test_setup_offers_configured_providers_too(): switching provider is possible
+    test_terms_have_no_em_dashes_or_colons(): the paragraph reads as plain prose
 """
 
 import asyncio
 from pathlib import Path
 
 import pytest
+from textual import events
 
 from agent.llm_client import CREDENTIAL_ENV_VARS
 from tui.app import ShipwrightApp
 from tui.screens.composer import Composer
+from tui.screens.onboarding import TERMS_TEXT, OnboardingScreen, TermsCard
 from tui.widgets.setup_panel import SetupPanel, Verification
 
 
@@ -67,9 +72,12 @@ def _reject(provider: object, key: str) -> Verification:
 def _panel_count(app: ShipwrightApp, action: str | None = None) -> tuple[int, bool]:
     """Mounts the app, optionally answers onboarding, and reports the outcome.
 
+    First-run terms are accepted before anything else, since provider setup
+    only appears behind them.
+
     Args:
         app: Application under test.
-        action: "save", "skip", or None to leave the panel alone.
+        action: "save", "enter", "skip", or None to leave the panel alone.
 
     Returns:
         remaining: How many setup panels are still mounted.
@@ -79,27 +87,72 @@ def _panel_count(app: ShipwrightApp, action: str | None = None) -> tuple[int, bo
     async def _run() -> tuple[int, bool]:
         async with app.run_test() as pilot:
             await pilot.pause()
+            if app.screen.query(TermsCard):
+                await pilot.press("enter")
+                await pilot.pause()
             if action in {"save", "enter"}:
-                panel = app.query_one(SetupPanel)
-                panel.query_one("#setup-key").value = "sk-ant-entered-by-hand"
+                panel = app.screen.query_one(SetupPanel)
+                panel.choose(0)
+                await pilot.pause()
                 if action == "enter":
-                    panel.query_one("#setup-key").focus()
+                    panel.query_one("#setup-key").value = "sk-ant-entered-by-hand"
                     await pilot.press("enter")
                 else:
-                    await pilot.click("#setup-save")
+                    panel.query_one("#setup-key").post_message(
+                        events.Paste("sk-ant-entered-by-hand")
+                    )
                 for _ in range(30):
                     await pilot.pause()
                     await asyncio.sleep(0.02)
-                    if not app.query(SetupPanel):
+                    if not app.screen.query(SetupPanel):
                         break
             elif action == "skip":
                 await pilot.click("#setup-skip")
                 await pilot.pause()
             await pilot.pause()
             focused = isinstance(app.focused, type(app.query_one(Composer).query_one("Input")))
-            return len(app.query(SetupPanel)), focused
+            return len(app.screen.query(SetupPanel)), focused
 
     return asyncio.run(_run())
+
+
+def test_first_run_opens_with_the_welcome_and_terms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts a fresh machine sees the welcome screen with the terms, not setup yet."""
+    _keyless(monkeypatch)
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> tuple[bool, int, int]:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            on_welcome = isinstance(app.screen, OnboardingScreen)
+            return on_welcome, len(app.screen.query(TermsCard)), len(app.screen.query(SetupPanel))
+
+    assert asyncio.run(_run()) == (True, 1, 0)
+
+
+def test_accepting_the_terms_opens_provider_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts Enter on the focused accept button swaps the terms for setup."""
+    _keyless(monkeypatch)
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> tuple[int, int]:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            return len(app.screen.query(TermsCard)), len(app.screen.query(SetupPanel))
+
+    assert asyncio.run(_run()) == (0, 1)
+
+
+def test_terms_have_no_em_dashes_or_colons() -> None:
+    """Asserts the terms paragraph is plain prose, with no em dashes or colons."""
+    assert "—" not in TERMS_TEXT
+    assert ":" not in TERMS_TEXT
 
 
 def test_panel_appears_with_no_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +172,9 @@ def test_panel_offers_every_provider(tmp_path: Path, monkeypatch: pytest.MonkeyP
     async def _run() -> list[str]:
         async with app.run_test() as pilot:
             await pilot.pause()
-            return [status.env_var for status in app.query_one(SetupPanel).missing]
+            await pilot.press("enter")
+            await pilot.pause()
+            return [status.env_var for status in app.screen.query_one(SetupPanel).missing]
 
     assert set(asyncio.run(_run())) == set(CREDENTIAL_ENV_VARS.values())
 
@@ -236,14 +291,14 @@ def test_setup_command_reopens_onboarding(tmp_path: Path, monkeypatch: pytest.Mo
     async def _run() -> tuple[int, int]:
         async with app.run_test() as pilot:
             await pilot.pause()
-            before = len(app.query(SetupPanel))
+            before = len(app.screen.query(SetupPanel))
             app.handle_line("/setup")
             for _ in range(20):
                 await pilot.pause()
                 await asyncio.sleep(0.02)
-                if app.query(SetupPanel):
+                if app.screen.query(SetupPanel):
                     break
-            return before, len(app.query(SetupPanel))
+            return before, len(app.screen.query(SetupPanel))
 
     before, after = asyncio.run(_run())
 
@@ -261,6 +316,6 @@ def test_setup_offers_configured_providers_too(
     async def _run() -> set[str]:
         async with app.run_test() as pilot:
             await pilot.pause()
-            return {status.env_var for status in app.query_one(SetupPanel).missing}
+            return {status.env_var for status in app.screen.query_one(SetupPanel).missing}
 
     assert asyncio.run(_run()) == set(CREDENTIAL_ENV_VARS.values())

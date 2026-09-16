@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-setup_panel.py --- first-run panel collecting a missing provider API key
+setup_panel.py --- onboarding card: pick a provider, then paste its API key
 
 Contains:
     CredentialStatus: whether one provider has a usable credential
@@ -8,20 +8,24 @@ Contains:
     all_providers(): lists every provider, configured or not
     persist_key(): writes one provider credential into the .env file
     confirmation_line(): renders a save confirmation carrying no credential
-    SetupPanel: prompts for a provider key on first run
+    display_name(): the name a provider is listed under
+    KeyInput: masked key field that reports a paste
+    SetupPanel: card that picks a provider, then takes its key
     SetupPanel.target(): the provider this panel is currently collecting for
     SetupPanel.is_needed(): whether any provider still requires a key
-    SetupPanel.compose(): builds the provider choice, masked input, and buttons
-    SetupPanel.on_mount(): puts the caret in the key field
+    SetupPanel.compose(): builds the provider stage and the key stage
+    SetupPanel.on_mount(): puts the keyboard on the provider dropdown
+    SetupPanel.choose(): picks a provider and swaps to the key field
+    SetupPanel.on_select_changed(): moves on once a provider is picked
+    SetupPanel.on_key_input_pasted(): saves a key as soon as it is pasted
     SetupPanel.on_input_submitted(): verifies and saves when Enter is pressed
-    SetupPanel.on_button_pressed(): saves the key or skips setup
+    SetupPanel.on_button_pressed(): skips setup
     SetupPanel.submit_key(): verifies whatever is currently typed
     SetupPanel.action_skip(): dismisses setup from the keyboard
     SetupPanel.Saved: reports which variable was written, never its value
     SetupPanel.Skipped: reports that setup was dismissed without a key
     Verification: whether a key was refused, and what to tell the operator
     verify_credential(): asks the provider whether a key works
-    DEFAULT_MODELS_BY_ENV: the model each provider verifies against
 """
 
 import os
@@ -31,16 +35,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
-from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
 from agent.llm_client import (
     CREDENTIAL_ENV_VARS,
-    DEFAULT_MODELS,
     MissingCredentialError,
     Provider,
     build_client,
@@ -53,19 +55,24 @@ from tui.redaction import redact_secrets
 ENV_FILENAME = ".env"
 ENV_FILE_MODE = 0o600
 KEY_INPUT_ID = "setup-key"
-SAVE_BUTTON_ID = "setup-save"
 SKIP_BUTTON_ID = "setup-skip"
-PROVIDER_SET_ID = "setup-provider"
+PROVIDER_SELECT_ID = "setup-provider"
 STATUS_LABEL_ID = "setup-status"
-EMPTY_KEY_NOTICE = "Paste a key first, or choose Skip for now."
-VERIFYING_NOTICE = "verifying the key with a real completion…"
-VERIFIED_TEMPLATE = "verified against {model} — saved to {path}"
-UNVERIFIED_TEMPLATE = "saved to {path}, but the provider could not be reached: {reason}"
+PROVIDER_PROMPT = "Select your model provider"
+SELECT_PLACEHOLDER = "Choose a provider"
+SKIP_LABEL = "Skip for now"
+KEY_PROMPT = "Paste your key"
+EMPTY_KEY_NOTICE = "Paste a key first, or press esc to skip."
+VERIFYING_NOTICE = "Verifying…"
+REFUSED_TEMPLATE = "That key was refused ({reason}). Paste another."
+VERIFIED_TEMPLATE = "Saved to {path}"
+UNVERIFIED_TEMPLATE = "Saved to {path}. The provider could not be reached ({reason})."
 REJECTED_STATUSES = frozenset({401, 403})
-PANEL_TITLE = "Welcome to shipwright"
-SECURITY_NOTE = "Runs sandboxed. Only this folder is mounted."
-PROVIDER_PROMPT = "Choose a model provider:"
-KEY_HINT = "enter to verify and save   ·   esc to skip"
+# The dropdown lists providers by product name, not by identifier.
+DISPLAY_NAMES: dict[Provider, str] = {
+    Provider.ANTHROPIC: "Anthropic",
+    Provider.OPENAI: "OpenAI",
+}
 VERIFY_TIMEOUT_S = 30.0
 
 
@@ -212,13 +219,49 @@ def confirmation_line(env_var: str, env_path: Path, key: str) -> str:
     return redact_secrets(f"Saved {env_var} to {env_path}", [key])
 
 
+def display_name(provider: Provider) -> str:
+    """Returns the name a provider is listed under in the dropdown.
+
+    Args:
+        provider: Provider to name.
+
+    Returns:
+        name: Its product name, or its identifier in title case.
+    """
+    return DISPLAY_NAMES.get(provider, provider.value.title())
+
+
+class KeyInput(Input):
+    """Masked key field that reports a paste, so a pasted key saves itself."""
+
+    class Pasted(Message):
+        """Reports that text was pasted into the key field."""
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Reports a paste once Input's own handler has inserted the text.
+
+        Textual runs Input._on_paste as well as this handler, so this must not
+        insert the text again. It runs first, hence the deferred report.
+
+        Args:
+            event: The paste the terminal delivered.
+        """
+        if event.text.strip():
+            self.call_after_refresh(self.post_message, self.Pasted())
+
+
 class SetupPanel(Static):
-    """Prompts for a provider API key when none is configured yet.
+    """Collects a provider API key: pick the provider, then paste the key.
+
+    The card starts with a dropdown of providers and a way to skip. Choosing
+    one swaps the card to a masked key field. Pasting a key, or pressing
+    Enter, verifies and stores it.
 
     Attributes:
         repo_path: Checkout whose .env file the entered key is written to.
-        missing: Providers still waiting on a credential.
+        missing: Providers offered in the dropdown.
         verifier: Proves a key works; injected so tests need no provider.
+        chosen: Index into missing of the provider picked, or None before one is.
     """
 
     class Saved(Message):
@@ -245,13 +288,30 @@ class SetupPanel(Static):
 
     BINDINGS = [Binding("escape", "skip", "Skip setup")]
 
+    DEFAULT_CSS = """
+    SetupPanel {
+        border: round $accent;
+        padding: 1 2;
+        width: 64;
+        max-width: 100%;
+        height: auto;
+    }
+    SetupPanel .setup-heading { color: $accent; text-style: bold; margin-bottom: 1; }
+    SetupPanel Select { margin-bottom: 1; }
+    SetupPanel #setup-skip { width: 100%; }
+    SetupPanel .setup-status { color: $accent; }
+    SetupPanel .key-stage { display: none; }
+    SetupPanel.choosing-key .provider-stage { display: none; }
+    SetupPanel.choosing-key .key-stage { display: block; }
+    """
+
     def __init__(
         self,
         repo_path: Path,
         missing: list[CredentialStatus] | None = None,
         verifier: Callable[[Provider, str], Verification] | None = None,
     ) -> None:
-        """Builds the panel for whichever providers lack a credential.
+        """Builds the card for whichever providers are offered.
 
         Args:
             repo_path: Checkout whose .env file the entered key is written to.
@@ -262,6 +322,7 @@ class SetupPanel(Static):
         self.repo_path = repo_path
         self.missing = detect_missing() if missing is None else missing
         self.verifier = verify_credential if verifier is None else verifier
+        self.chosen: int | None = None
 
     def is_needed(self) -> bool:
         """Reports whether the panel has anything left to ask for.
@@ -275,58 +336,62 @@ class SetupPanel(Static):
         """Returns the provider whose credential the panel is collecting.
 
         Returns:
-            status: Provider currently selected, or the first one offered.
+            status: Provider picked in the dropdown, or the first one offered.
         """
-        try:
-            chosen = self.query_one(f"#{PROVIDER_SET_ID}", RadioSet).pressed_index
-        except NoMatches:
+        if self.chosen is None:
             return self.missing[0]
-        if chosen < 0 or chosen >= len(self.missing):
-            return self.missing[0]
-        return self.missing[chosen]
-
-    DEFAULT_CSS = """
-    SetupPanel {
-        border: round $accent;
-        padding: 1 2;
-        margin: 1 4;
-        height: auto;
-    }
-    SetupPanel .setup-note { color: $text-muted; }
-    SetupPanel .setup-status { color: $accent; }
-    """
+        return self.missing[self.chosen]
 
     def compose(self) -> ComposeResult:
-        """Builds the provider choice, the masked key input, and the buttons."""
+        """Builds the provider stage and the key stage; one is shown at a time."""
         if not self.is_needed():
             yield Label("Every provider already has a key configured.")
             return
-
-        self.border_title = PANEL_TITLE
-        yield Label(SECURITY_NOTE, classes="setup-note")
-        yield Label(PROVIDER_PROMPT)
-        yield RadioSet(
-            *(
-                RadioButton(
-                    f"{status.provider.value}  ·  {DEFAULT_MODELS[status.provider]}",
-                    value=index == 0,
-                )
-                for index, status in enumerate(self.missing)
-            ),
-            id=PROVIDER_SET_ID,
+        yield Label(PROVIDER_PROMPT, classes="setup-heading provider-stage")
+        yield Select(
+            [(display_name(status.provider), index) for index, status in enumerate(self.missing)],
+            prompt=SELECT_PLACEHOLDER,
+            id=PROVIDER_SELECT_ID,
+            classes="provider-stage",
         )
-        yield Input(placeholder="paste key here", password=True, id=KEY_INPUT_ID)
-        yield Label(KEY_HINT, classes="setup-note")
-        yield Label("", id=STATUS_LABEL_ID, classes="setup-status")
-        yield Horizontal(
-            Button("Verify and save", variant="primary", id=SAVE_BUTTON_ID),
-            Button("Skip for now", id=SKIP_BUTTON_ID),
-        )
+        yield Button(SKIP_LABEL, id=SKIP_BUTTON_ID, classes="provider-stage")
+        yield Label(KEY_PROMPT, classes="setup-heading key-stage")
+        yield KeyInput(placeholder="", password=True, id=KEY_INPUT_ID, classes="key-stage")
+        yield Label("", id=STATUS_LABEL_ID, classes="setup-status key-stage")
 
     def on_mount(self) -> None:
-        """Puts the caret in the key field as soon as the panel appears."""
+        """Puts the keyboard on the provider dropdown as soon as the card appears."""
         if self.is_needed():
-            self.query_one(f"#{KEY_INPUT_ID}", Input).focus()
+            self.query_one(f"#{PROVIDER_SELECT_ID}", Select).focus()
+
+    def choose(self, index: int) -> None:
+        """Picks a provider and swaps the card to the key field.
+
+        Args:
+            index: Position of the provider in missing.
+        """
+        self.chosen = index
+        self.add_class("choosing-key")
+        self.query_one(f"#{KEY_INPUT_ID}", Input).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Moves on to the key field once a provider is picked.
+
+        Args:
+            event: Change carrying the picked provider's index.
+        """
+        event.stop()
+        if isinstance(event.value, int):
+            self.choose(event.value)
+
+    def on_key_input_pasted(self, event: KeyInput.Pasted) -> None:
+        """Verifies and saves a key as soon as it is pasted.
+
+        Args:
+            event: Notice that the key field received a paste.
+        """
+        event.stop()
+        self.submit_key()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Verifies and saves the key when Enter is pressed in the field.
@@ -344,20 +409,17 @@ class SetupPanel(Static):
         self.post_message(self.Skipped())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Verifies and stores the entered key, or dismisses setup.
+        """Dismisses setup when Skip for now is pressed.
 
         Args:
             event: Button press identifying which control was activated.
         """
         if event.button.id == SKIP_BUTTON_ID:
+            event.stop()
             self.post_message(self.Skipped())
-            return
-        if event.button.id != SAVE_BUTTON_ID:
-            return
-        self.submit_key()
 
     def submit_key(self) -> None:
-        """Verifies whatever is currently typed, then stores it if it works."""
+        """Verifies whatever is currently in the key field, then stores it if it works."""
         entry = self.query_one(f"#{KEY_INPUT_ID}", Input)
         status = self.query_one(f"#{STATUS_LABEL_ID}", Label)
         key = entry.value.strip()
@@ -388,19 +450,19 @@ class SetupPanel(Static):
             result: What the provider said about the key.
         """
         status = self.query_one(f"#{STATUS_LABEL_ID}", Label)
+        entry = self.query_one(f"#{KEY_INPUT_ID}", Input)
         if result.is_rejected:
-            status.update(f"that key was refused — {result.message}")
+            entry.value = ""
+            status.update(REFUSED_TEMPLATE.format(reason=result.message))
             return
 
         env_path = persist_key(target.env_var, key, self.repo_path)
         # Apply it now as well: the run about to start reads the environment,
         # not the file, and re-prompting for a key just saved is nonsense.
         os.environ[target.env_var] = key
-        self.query_one(f"#{KEY_INPUT_ID}", Input).value = ""
+        entry.value = ""
         if result.message:
             status.update(UNVERIFIED_TEMPLATE.format(path=env_path, reason=result.message))
         else:
-            status.update(
-                VERIFIED_TEMPLATE.format(model=DEFAULT_MODELS[target.provider], path=env_path)
-            )
+            status.update(VERIFIED_TEMPLATE.format(path=env_path))
         self.post_message(self.Saved(target.env_var, env_path))
