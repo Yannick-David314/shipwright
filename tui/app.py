@@ -191,6 +191,11 @@ class ShipwrightApp(App[None]):
     #region-composer {
         height: 3;
     }
+    /* The chat box is drawn in the wordmark blue, focused or not. */
+    #region-composer Input,
+    #region-composer Input:focus {
+        border: tall $accent;
+    }
     #region-context {
         height: 1;
         padding: 0 2;
