@@ -35,6 +35,7 @@ class Palette:
         panel_background: Fill behind a bordered panel.
         panel_border: Border color of a panel.
         border_subtle: Border color for low-emphasis separators.
+        highlight: Second colour, for body text that should stand apart from the blue.
     """
 
     background: str
@@ -47,6 +48,7 @@ class Palette:
     panel_background: str
     panel_border: str
     border_subtle: str
+    highlight: str
 
 
 # Sampled from docs/media/wordmark.png, and the same blue the README badges use.
@@ -63,6 +65,7 @@ DARK = Palette(
     panel_background="#0a0a0a",
     panel_border=BRAND_BLUE,
     border_subtle="#1c4f8f",
+    highlight="#2ec4b6",
 )
 
 
@@ -77,6 +80,7 @@ MONOCHROME = Palette(
     panel_background="",
     panel_border="",
     border_subtle="",
+    highlight="",
 )
 COLORLESS_TERMS = frozenset({"", "dumb", "unknown"})
 
@@ -136,6 +140,7 @@ CSS_VARIABLE_NAMES: dict[str, str] = {
     "warning": "hunk",
     "panel-border": "panel_border",
     "border-subtle": "border_subtle",
+    "secondary": "highlight",
 }
 
 
