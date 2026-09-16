@@ -45,8 +45,7 @@ def test_core_regions_mount(tmp_path: Path) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             return [
-                type(app.query_one(widget)).__name__
-                for widget in (Wordmark, Timeline, Composer)
+                type(app.query_one(widget)).__name__ for widget in (Wordmark, Timeline, Composer)
             ]
 
     assert asyncio.run(_boot()) == ["Wordmark", "Timeline", "Composer"]

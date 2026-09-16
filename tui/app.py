@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-app.py --- Textual application composing the four regions of the interface
+app.py --- Textual application composing the regions of the interface
 
 Contains:
     DEFAULT_GATEWAY_URL: gateway the connection indicator polls by default
