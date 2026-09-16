@@ -5,6 +5,7 @@ test_onboarding.py --- covers the first-run welcome, terms, provider and key flo
 Contains:
     _keyless(): clears every provider credential from the environment
     test_first_run_opens_with_the_welcome_and_terms(): terms come before setup
+    test_terms_carry_a_title_above_the_text(): a bold title heads the paragraph
     test_accepting_the_terms_opens_provider_setup(): the card swaps on accept
     test_panel_appears_with_no_key(): a fresh machine is asked to set up
     test_panel_offers_every_provider(): the operator picks which provider to use
@@ -16,8 +17,12 @@ Contains:
     test_unreachable_provider_still_stores_the_key(): offline does not re-prompt
     test_force_setup_reopens_onboarding(): --setup asks again despite a stored key
     test_setup_command_reopens_onboarding(): /setup asks again mid-session
+    test_rerunning_setup_shows_only_the_provider_card(): no welcome, no terms
+    test_fresh_install_onboards_even_with_a_key_set(): a new install always welcomes
+    test_saving_marks_the_install_onboarded(): the next launch goes straight home
     test_setup_offers_configured_providers_too(): switching provider is possible
     test_terms_have_no_em_dashes_or_colons(): the paragraph reads as plain prose
+    test_heading_fits_the_window(): one line when wide, two when narrower, none when tiny
 """
 
 import asyncio
@@ -27,10 +32,11 @@ import pytest
 from textual import events
 
 from agent.llm_client import CREDENTIAL_ENV_VARS
-from tui.app import ShipwrightApp
+from tui.app import ONBOARDED_MARKER, STATE_DIR_ENV, ShipwrightApp
 from tui.screens.composer import Composer
-from tui.screens.onboarding import TERMS_TEXT, OnboardingScreen, TermsCard
+from tui.screens.onboarding import TERMS_TEXT, TERMS_TITLE, OnboardingScreen, TermsCard
 from tui.widgets.setup_panel import SetupPanel, Verification
+from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark
 
 
 def _keyless(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,6 +136,32 @@ def test_first_run_opens_with_the_welcome_and_terms(
             return on_welcome, len(app.screen.query(TermsCard)), len(app.screen.query(SetupPanel))
 
     assert asyncio.run(_run()) == (True, 1, 0)
+
+
+def test_terms_carry_a_title_above_the_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts the terms card shows its bold title above the turquoise paragraph."""
+    _keyless(monkeypatch)
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> tuple[str, bool, int, int]:
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            title = app.screen.query_one("#terms-title")
+            text = app.screen.query_one("#terms-text")
+            return (
+                str(title.render()),
+                title.styles.text_style.bold,
+                title.region.y,
+                text.region.y,
+            )
+
+    rendered, is_bold, title_y, text_y = asyncio.run(_run())
+
+    assert rendered == TERMS_TITLE
+    assert is_bold
+    assert title_y < text_y
 
 
 def test_accepting_the_terms_opens_provider_setup(
@@ -319,3 +351,87 @@ def test_setup_offers_configured_providers_too(
             return {status.env_var for status in app.screen.query_one(SetupPanel).missing}
 
     assert asyncio.run(_run()) == set(CREDENTIAL_ENV_VARS.values())
+
+
+def test_heading_fits_the_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asserts the welcome heading is one line when wide, two when narrower, hidden when tiny."""
+    _keyless(monkeypatch)
+
+    async def _run(size: tuple[int, int]) -> tuple[bool, tuple[str, ...]]:
+        app = ShipwrightApp(tmp_path)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            mark = app.screen.query_one("#welcome-mark", Wordmark)
+            return mark.display, mark.words
+
+    assert asyncio.run(_run((140, 40))) == (True, WELCOME_LINE)
+    assert asyncio.run(_run((90, 40))) == (True, WELCOME_WORDS)
+    assert asyncio.run(_run((80, 24)))[0] is False
+
+
+def test_rerunning_setup_shows_only_the_provider_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts /setup and --setup skip the welcome heading and the terms."""
+    _keyless(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-already-configured")
+
+    async def _run(app: ShipwrightApp, command: bool) -> tuple[int, int, int]:
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            if command:
+                app.handle_line("/setup")
+                await pilot.pause()
+            screen = app.screen
+            return (
+                len(screen.query("#welcome-mark")),
+                len(screen.query(TermsCard)),
+                len(screen.query(SetupPanel)),
+            )
+
+    assert asyncio.run(_run(ShipwrightApp(tmp_path), command=True)) == (0, 0, 1)
+    assert asyncio.run(_run(ShipwrightApp(tmp_path, force_setup=True), command=False)) == (0, 0, 1)
+
+
+def test_fresh_install_onboards_even_with_a_key_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts an install with no onboarded marker shows the welcome despite a key."""
+    _keyless(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-left-over")
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv(STATE_DIR_ENV, str(state))
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> tuple[bool, int]:
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            return isinstance(app.screen, OnboardingScreen), len(app.screen.query(TermsCard))
+
+    assert asyncio.run(_run()) == (True, 1)
+
+
+def test_saving_marks_the_install_onboarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts completing onboarding writes the marker, so the next launch goes home."""
+    _keyless(monkeypatch)
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv(STATE_DIR_ENV, str(state))
+    app = ShipwrightApp(tmp_path)
+    app.credential_verifier = _accept
+
+    remaining, _ = _panel_count(app, action="save")
+
+    assert remaining == 0
+    assert (state / ONBOARDED_MARKER).exists()
+
+    async def _relaunch() -> bool:
+        relaunched = ShipwrightApp(tmp_path)
+        async with relaunched.run_test() as pilot:
+            await pilot.pause()
+            return isinstance(relaunched.screen, OnboardingScreen)
+
+    assert asyncio.run(_relaunch()) is False

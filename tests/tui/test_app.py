@@ -11,17 +11,20 @@ Contains:
     test_setup_panel_appears_without_any_key(): a keyless env prompts for setup
     test_blank_line_starts_nothing(): whitespace never opens a turn
     test_palette_reaches_textual_tokens(): the project palette themes the app
+    test_chat_box_border_is_the_wordmark_blue(): focused or not, the box is brand blue
 """
 
 import asyncio
 from pathlib import Path
 
 import pytest
+from textual.color import Color
+from textual.widgets import Input
 
 from tui.app import ShipwrightApp
 from tui.screens.composer import Composer
 from tui.screens.timeline import Timeline
-from tui.theme import DARK
+from tui.theme import BRAND_BLUE, DARK
 from tui.widgets.wordmark import Wordmark
 
 
@@ -133,3 +136,22 @@ def test_monochrome_palette_emits_no_tokens(tmp_path: Path) -> None:
     app = ShipwrightApp(tmp_path, provider="anthropic", palette=MONOCHROME)
 
     assert "panel-border" not in app.get_css_variables()
+
+
+def test_chat_box_border_is_the_wordmark_blue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts the chat box border is the wordmark blue, focused and unfocused."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-configured")
+
+    async def _borders() -> list[Color]:
+        app = _app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            box = app.query_one(Composer).query_one(Input)
+            focused = box.styles.border_top[1]
+            box.blur()
+            await pilot.pause()
+            return [focused, box.styles.border_top[1]]
+
+    assert asyncio.run(_borders()) == [Color.parse(BRAND_BLUE)] * 2

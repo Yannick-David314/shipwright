@@ -9,6 +9,8 @@ Contains:
     ShipwrightApp.get_css_variables(): feeds the palette into Textual's tokens
     ShipwrightApp.compose(): lays out wordmark, timeline, status, composer and context
     ShipwrightApp.needs_setup(): whether onboarding should run at startup
+    ShipwrightApp.is_onboarded(): whether this install has been through onboarding
+    ShipwrightApp.mark_onboarded(): records that onboarding was completed
     ShipwrightApp.open_setup(): re-runs provider setup on demand
     ShipwrightApp.onboarding(): builds the onboarding screen for this checkout
     ShipwrightApp.close_onboarding(): returns from onboarding to the home page
@@ -43,7 +45,9 @@ Contains:
     ShipwrightApp.on_setup_panel_skipped(): dismisses onboarding when declined
 """
 
+import os
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
@@ -114,6 +118,9 @@ SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
 # crowd out the transcript the loop still has to fit in its own budget.
 HISTORY_TURN_LIMIT = 12
+# Set by the installed launcher to a directory kept inside the install.
+STATE_DIR_ENV = "SHIPWRIGHT_STATE_DIR"
+ONBOARDED_MARKER = "onboarded"
 PLAN_DECISION_TIMEOUT_S = 300.0
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
@@ -183,6 +190,11 @@ class ShipwrightApp(App[None]):
     }
     #region-composer {
         height: 3;
+    }
+    /* The chat box is drawn in the wordmark blue, focused or not. */
+    #region-composer Input,
+    #region-composer Input:focus {
+        border: tall $accent;
     }
     #region-context {
         height: 1;
@@ -258,6 +270,29 @@ class ShipwrightApp(App[None]):
             return True
         return len(detect_missing()) == len(list(Provider))
 
+    def is_onboarded(self) -> bool:
+        """Reports whether this install has already been through onboarding.
+
+        The installed launcher mounts a state directory that lives inside the
+        install, so uninstalling removes the record and the next install
+        starts from the welcome screen, even if a key is still set somewhere.
+        A run with no state directory (from a checkout) goes by keys alone.
+
+        Returns:
+            is_onboarded: False only when a state directory exists without the marker.
+        """
+        state_dir = os.environ.get(STATE_DIR_ENV, "").strip()
+        if not state_dir:
+            return True
+        return (Path(state_dir) / ONBOARDED_MARKER).exists()
+
+    def mark_onboarded(self) -> None:
+        """Records in the state directory that onboarding has been completed."""
+        state_dir = os.environ.get(STATE_DIR_ENV, "").strip()
+        if state_dir:
+            with suppress(OSError):
+                (Path(state_dir) / ONBOARDED_MARKER).touch()
+
     def compose(self) -> ComposeResult:
         """Lays out the hero, the timeline, the status line, and the composer."""
         hero = Vertical(
@@ -310,9 +345,11 @@ class ShipwrightApp(App[None]):
         """
         self.register_commands()
         self.query_one(Composer).focus_input()
-        if self.needs_setup():
-            offered = all_providers() if self.force_setup else None
-            self.push_screen(self.onboarding(offered, show_terms=not self.force_setup))
+        onboarded = self.is_onboarded()
+        first_run = not self.force_setup and (not onboarded or self.needs_setup())
+        if first_run or self.needs_setup():
+            offered = all_providers() if (self.force_setup or not onboarded) else None
+            self.push_screen(self.onboarding(offered, show_terms=first_run))
 
     def onboarding(
         self, offered: list[CredentialStatus] | None, show_terms: bool
@@ -614,6 +651,7 @@ class ShipwrightApp(App[None]):
             event: Message naming the variable that was written.
         """
         event.stop()
+        self.mark_onboarded()
         self.close_onboarding()
 
     def on_setup_panel_skipped(self, event: SetupPanel.Skipped) -> None:

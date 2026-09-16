@@ -106,11 +106,12 @@ ship-uninstall
 ```
 
 That removes the launchers, the container image, and `~/.local/share/shipwright`,
-then offers to clear stored provider keys so a reinstall starts from onboarding
-again. Keys live in each project's `.env` rather than in the install, so it
-lists every file it found and asks before touching any of them — and it strips
-only the `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` lines, leaving anything else in
-those files alone.
+including the record that onboarding was done, so the next install starts from
+onboarding again. It also clears every stored provider key without asking. Keys
+live in each project's `.env` rather than in the install, so it finds those
+files under your home directory and strips only the `ANTHROPIC_API_KEY` and
+`OPENAI_API_KEY` lines, leaving anything else in them alone. A key exported in
+your shell profile is yours to remove.
 
 Docker and gVisor are left installed, and your checkouts stay where they are.
 
