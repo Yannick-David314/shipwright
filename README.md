@@ -306,7 +306,8 @@ background process, so it attaches to the same gateway (`:4000`) the CLI uses.
 
 Once it is open:
 
-1. The header shows the checkout, its branch, the provider, and live spend.
+1. The line under the composer shows how full the context is, the model, and
+   the permission mode.
 2. Type what the agent should do and press Enter. Anything typed while a run is
    in flight is queued and starts when the agent frees up.
 3. Slash commands adjust the run without restarting it:
