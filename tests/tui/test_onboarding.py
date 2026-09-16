@@ -18,6 +18,7 @@ Contains:
     test_setup_command_reopens_onboarding(): /setup asks again mid-session
     test_setup_offers_configured_providers_too(): switching provider is possible
     test_terms_have_no_em_dashes_or_colons(): the paragraph reads as plain prose
+    test_heading_fits_the_window(): one line when wide, two when narrower, none when tiny
 """
 
 import asyncio
@@ -31,6 +32,7 @@ from tui.app import ShipwrightApp
 from tui.screens.composer import Composer
 from tui.screens.onboarding import TERMS_TEXT, OnboardingScreen, TermsCard
 from tui.widgets.setup_panel import SetupPanel, Verification
+from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark
 
 
 def _keyless(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -319,3 +321,19 @@ def test_setup_offers_configured_providers_too(
             return {status.env_var for status in app.screen.query_one(SetupPanel).missing}
 
     assert asyncio.run(_run()) == set(CREDENTIAL_ENV_VARS.values())
+
+
+def test_heading_fits_the_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asserts the welcome heading is one line when wide, two when narrower, hidden when tiny."""
+    _keyless(monkeypatch)
+
+    async def _run(size: tuple[int, int]) -> tuple[bool, tuple[str, ...]]:
+        app = ShipwrightApp(tmp_path)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            mark = app.screen.query_one("#welcome-mark", Wordmark)
+            return mark.display, mark.words
+
+    assert asyncio.run(_run((140, 40))) == (True, WELCOME_LINE)
+    assert asyncio.run(_run((90, 40))) == (True, WELCOME_WORDS)
+    assert asyncio.run(_run((80, 24)))[0] is False

@@ -5,13 +5,13 @@ onboarding.py --- first-run screen: welcome, terms, provider, key
 Contains:
     TERMS_TEXT: the one-paragraph terms shown before setup
     ACCEPT_LABEL: the label on the button accepting them
-    MARK_MIN_HEIGHT / MARK_MIN_WIDTH: the smallest window that shows the heading
+    LINE_MIN_HEIGHT / MARK_MIN_HEIGHT / MARK_MARGIN: the room each heading needs
     TermsCard: bordered card holding the terms and the accept button
     TermsCard.Accepted: reports that the terms were accepted
     OnboardingScreen: centred welcome heading above one card at a time
     OnboardingScreen.build_setup(): builds the provider setup card
     OnboardingScreen.compose(): lays out the heading and the first card
-    OnboardingScreen.on_resize(): drops the heading when the window is too small
+    OnboardingScreen.on_resize(): fits the heading to one line, two lines, or none
     OnboardingScreen.on_terms_card_accepted(): swaps the terms for provider setup
 """
 
@@ -27,12 +27,14 @@ from textual.widgets import Button, Static
 
 from agent.llm_client import Provider
 from tui.widgets.setup_panel import CredentialStatus, SetupPanel, Verification
-from tui.widgets.wordmark import WELCOME_WORDS, Wordmark
+from tui.widgets.wordmark import WELCOME_LINE, WELCOME_WORDS, Wordmark, block_width
 
 ACCEPT_LABEL = "Accept and continue"
-# The heading is 11 rows and 65 columns; below this it would push the card off screen.
+# Rows the window needs to hold the one-line (5 row) or two-line (11 row)
+# heading above a card, and the columns kept free either side of it.
+LINE_MIN_HEIGHT = 28
 MARK_MIN_HEIGHT = 34
-MARK_MIN_WIDTH = 70
+MARK_MARGIN = 4
 ACCEPT_BUTTON_ID = "terms-accept"
 TERMS_TEXT = (
     "Shipwright is a fun open source side project, built by people who think robots "
@@ -161,18 +163,27 @@ class OnboardingScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         """Lays out the heading and whichever card comes first."""
         with Vertical(id="onboarding"):
-            yield Wordmark(id="welcome-mark", words=WELCOME_WORDS)
+            yield Wordmark(id="welcome-mark", words=WELCOME_LINE)
             with Center(id="onboarding-card"):
                 yield TermsCard() if self.show_terms else self.build_setup()
 
     def on_resize(self, event: events.Resize) -> None:
-        """Drops the block heading when the window is too small to hold it and a card.
+        """Fits the heading to the window: one line, two lines, or none.
 
         Args:
             event: The screen's new size.
         """
-        fits = event.size.height >= MARK_MIN_HEIGHT and event.size.width >= MARK_MIN_WIDTH
-        self.query_one("#welcome-mark", Wordmark).display = fits
+        mark = self.query_one("#welcome-mark", Wordmark)
+        width, height = event.size.width, event.size.height
+        if width >= block_width(WELCOME_LINE) + MARK_MARGIN and height >= LINE_MIN_HEIGHT:
+            mark.words = WELCOME_LINE
+        elif width >= block_width(WELCOME_WORDS) + MARK_MARGIN and height >= MARK_MIN_HEIGHT:
+            mark.words = WELCOME_WORDS
+        else:
+            mark.display = False
+            return
+        mark.display = True
+        mark.refresh(layout=True)
 
     def on_terms_card_accepted(self, event: TermsCard.Accepted) -> None:
         """Swaps the terms card for provider setup.

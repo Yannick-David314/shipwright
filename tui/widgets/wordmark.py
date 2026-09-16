@@ -9,7 +9,9 @@ Contains:
     BLOCK_FONT: one block-capital glyph per letter of the project name
     render_word(): renders a word as block-capital rows
     WORDMARK_LINES: the ASCII art shown on the boot screen
-    WELCOME_WORDS: the two lines the onboarding screen spells out
+    WELCOME_LINE: the onboarding heading on one line
+    WELCOME_WORDS: the same heading split over two lines
+    block_width(): how many columns a set of block-capital lines needs
     Wordmark: boot-screen widget drawing the wordmark
     Wordmark.style_for_palette(): the colour the wordmark is drawn in
     Wordmark.render(): renders every wordmark line
@@ -61,6 +63,22 @@ def render_word(word: str) -> tuple[str, ...]:
 
 
 WORDMARK_LINES = render_word(PROJECT_NAME)
+
+
+def block_width(words: tuple[str, ...]) -> int:
+    """Returns how many columns a set of block-capital lines needs.
+
+    Args:
+        words: Lines of text drawn in block capitals.
+
+    Returns:
+        width: Width of the widest rendered line.
+    """
+    return max(len(render_word(word)[0]) for word in words)
+
+
+WELCOME_LINE = ("WELCOME TO SHIPWRIGHT!",)
+# The same heading split in two, for windows too narrow for the single line.
 WELCOME_WORDS = ("WELCOME TO", "SHIPWRIGHT!")
 
 
