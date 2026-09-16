@@ -95,7 +95,7 @@ from tui.commands import (
 from tui.screens.composer import Composer
 from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
-from tui.theme import Palette, css_variables, palette_for
+from tui.theme import TOKEN_FALLBACKS, Palette, css_variables, palette_for
 from tui.transcript import resume
 from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
 from tui.widgets.context_bar import ContextBar
@@ -258,7 +258,10 @@ class ShipwrightApp(App[None]):
         Returns:
             variables: Textual's defaults overlaid with the project palette.
         """
-        return {**super().get_css_variables(), **css_variables(self.palette)}
+        variables = {**super().get_css_variables(), **css_variables(self.palette)}
+        for token, fallback in TOKEN_FALLBACKS.items():
+            variables.setdefault(token, variables[fallback])
+        return variables
 
     def needs_setup(self) -> bool:
         """Reports whether any provider credential is still missing.

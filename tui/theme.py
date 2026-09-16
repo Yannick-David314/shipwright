@@ -12,6 +12,7 @@ Contains:
     supports_color(): decides whether a terminal should be sent colour
     palette_for(): picks the palette a terminal should render with
     CSS_VARIABLE_NAMES: which Textual design token each palette field feeds
+    TOKEN_FALLBACKS: built-in tokens that custom tokens borrow when left blank
     css_variables(): renders a palette as Textual design tokens
 """
 
@@ -146,6 +147,11 @@ CSS_VARIABLE_NAMES: dict[str, str] = {
     "border-subtle": "border_subtle",
     "secondary": "highlight",
     "caution": "caution",
+}
+# Tokens Textual does not define itself, and the built-in token each borrows
+# when the palette leaves it blank, so a colourless terminal still parses.
+TOKEN_FALLBACKS: dict[str, str] = {
+    "caution": "warning",
 }
 
 
