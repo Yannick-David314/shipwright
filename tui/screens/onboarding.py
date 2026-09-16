@@ -35,7 +35,7 @@ MARK_MIN_HEIGHT = 34
 MARK_MIN_WIDTH = 70
 ACCEPT_BUTTON_ID = "terms-accept"
 TERMS_TEXT = (
-    "shipwright is a fun open source side project, built by people who think robots "
+    "Shipwright is a fun open source side project, built by people who think robots "
     "writing pull requests is a perfectly normal hobby. It comes with no warranty of "
     "any kind, express or implied, so treat every change it makes like a pull request "
     "from a very enthusiastic intern and review it before you merge. The agent runs "
@@ -43,7 +43,8 @@ TERMS_TEXT = (
     "responsible for the commands you approve, the code you ship, and whatever your "
     "model provider bills you for tokens. Your API key stays on this machine and is "
     "only ever sent to the provider you choose. By continuing you accept these terms "
-    "and the MIT License, and you agree to be kind to the robot. It is doing its best."
+    "and the MIT License, and you agree to be as kind as possible to the agent. "
+    "It is doing its best."
 )
 
 
