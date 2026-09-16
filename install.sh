@@ -171,12 +171,13 @@ with_progress() {
 # Done in a subshell: a redirection failure on a special builtin kills the shell.
 have_tty() { ( exec >/dev/tty ) 2>/dev/null; }
 
+# Defaults to yes, as apt does: uninstalling is meant to start afresh.
 confirm() {
     have_tty || die "no terminal for confirmation. Download the script and run it: sh install.sh"
     clear_bar
-    printf '%s [y/N] ' "$1" > /dev/tty
+    printf '%s [Y/n] ' "$1" > /dev/tty
     read -r reply < /dev/tty
-    case "$reply" in [yY]*) return 0 ;; *) return 1 ;; esac
+    case "$reply" in [nN]*) return 1 ;; *) return 0 ;; esac
 }
 
 as_root() {
