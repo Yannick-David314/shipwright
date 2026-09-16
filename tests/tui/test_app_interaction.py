@@ -25,6 +25,7 @@ from textual.widgets import Input
 from agent.llm_client import ScriptedLLM
 from agent.loop import AgentConfig, AgentLoop
 from tui.app import ShipwrightApp
+from tui.commands import INFERENCE_NOT_CONFIGURED
 from tui.screens.timeline import Timeline
 
 SCRIPT = [
@@ -165,4 +166,4 @@ def test_missing_credential_is_reported_in_the_timeline(
 
     answer = asyncio.run(_run())
 
-    assert "API_KEY" in answer
+    assert answer == INFERENCE_NOT_CONFIGURED

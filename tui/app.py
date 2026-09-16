@@ -79,6 +79,7 @@ from agent.permissions import (
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
+    INFERENCE_NOT_CONFIGURED,
     USAGE_MODEL,
     CommandRouter,
     UnknownCommandError,
@@ -439,8 +440,8 @@ class ShipwrightApp(App[None]):
             self.active_loop = loop
             result = loop.run(on_step=lambda step: self.call_from_thread(self.append_step, step))
             answer = result.final_answer or NO_ANSWER_NOTICE
-        except MissingCredentialError as exc:
-            answer = str(exc)
+        except MissingCredentialError:
+            answer = INFERENCE_NOT_CONFIGURED
         except RunawayRunError as exc:
             answer = f"halted: {exc}"
         except httpx.HTTPError as exc:
@@ -476,8 +477,8 @@ class ShipwrightApp(App[None]):
             model = parts[1]
         try:
             build_client(provider, model)
-        except MissingCredentialError as exc:
-            return str(exc)
+        except MissingCredentialError:
+            return INFERENCE_NOT_CONFIGURED
 
         self.provider = provider.value
         self.model = model
