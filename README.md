@@ -91,6 +91,7 @@ permissions. It never asks again.
 | `ship-update` | Rebuild from the latest source |
 | `ship --setup` | Change provider or API key |
 | `ship --mode bypass` | Start in a permission mode (`manual`, `edit`, `plan`, `bypass`) |
+| `ship --resume <id>` | Pick up a saved session; the id is printed when you exit |
 | `ship-uninstall` | Remove shipwright |
 
 ### Update
@@ -310,7 +311,8 @@ Once it is open:
 
 1. The line under the composer shows how full the context is, the model, and
    the permission mode.
-2. Type what the agent should do and press Enter. Anything typed while a run is
+2. Type a message and press Enter. Chat gets a reply; the agent only reads or
+   changes the checkout when you ask it to. Anything typed while a run is
    in flight is queued and starts when the agent frees up.
 3. Slash commands adjust the run without restarting it:
 

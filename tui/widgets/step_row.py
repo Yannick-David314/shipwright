@@ -101,7 +101,7 @@ def draw_card(block: Text, sections: list[CardSection], width: int, palette: Pal
     """Appends a bordered card of labelled sections to a block of text.
 
     Sections are split by a rule, lines wrap inside the border instead of
-    breaking its right edge, and the border is drawn in the accent colour.
+    breaking its right edge, and the border is drawn in the highlight colour.
 
     Args:
         block: Text the card is appended to, on a new line.
@@ -112,7 +112,8 @@ def draw_card(block: Text, sections: list[CardSection], width: int, palette: Pal
     Returns:
         block: The same text, with the card appended.
     """
-    border = palette.accent
+    # Turquoise, so a step's card never reads as the blue chat box.
+    border = palette.highlight or palette.accent
     inner = width - 2
     text_width = max(inner - LABEL_WIDTH - 2, 1)
     block.append("\n╭" + "─" * inner + "╮", style=border)
