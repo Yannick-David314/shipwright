@@ -443,7 +443,7 @@ while [ "$remaining" -gt 0 ]; do
             shift
             remaining=$((remaining - 1))
             ;;
-        --provider | --gateway)
+        --provider | --gateway | --mode)
             set -- "$@" "$arg"
             if [ "$remaining" -gt 0 ]; then
                 set -- "$@" "$1"
