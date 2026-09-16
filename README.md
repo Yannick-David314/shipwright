@@ -316,7 +316,7 @@ Once it is open:
 | `/plan` | Propose steps and wait for an explicit accept before running them |
 | `/mode [manual\|edit\|plan\|bypass]` | List permission modes, or switch to one |
 | `/resume <transcript>` | Reload a prior run as dimmed, completed rows |
-| `/model <provider> [model]` | Switch provider or model mid-run |
+| `/model [model]` | List models, or switch model mid-run |
 | `/max-cost <usd>` | Raise or lower the run's spend ceiling live |
 | `/max-steps <n>` | Raise or lower the run's iteration ceiling live |
 | `/setup` | Change provider or API key without restarting |
