@@ -8,6 +8,7 @@ Contains:
     resolve_workspace(): turns a typed path into the directory to work on
     provider_choices(): the provider names the entrypoint accepts
     build_app(): builds the application from parsed arguments, loading .env first
+    resume_hint(): the command printed on exit to resume the session
     main(): opens the terminal interface and returns its exit status
 """
 
@@ -21,6 +22,7 @@ from agent.env_file import load_env_file
 from agent.llm_client import Provider
 from agent.permissions import PermissionMode, parse_mode
 from tui.app import DEFAULT_GATEWAY_URL, ShipwrightApp
+from tui.sessions import load_session, sessions_dir
 
 EXIT_OK = 0
 
@@ -86,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="start in manual (default), edit, plan, or bypass",
     )
     parser.add_argument(
+        "--resume",
+        metavar="SESSION",
+        help="pick up a saved session where it left off",
+    )
+    parser.add_argument(
         "--setup",
         action="store_true",
         help="re-run provider and API-key setup, even if a key is already stored",
@@ -137,6 +144,12 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     except NotADirectoryError as exc:
         parser.error(str(exc))
     load_env_file(workspace)
+    conversation = None
+    if args.resume is not None:
+        try:
+            conversation = load_session(args.resume, sessions_dir())
+        except LookupError as exc:
+            parser.error(str(exc))
     return ShipwrightApp(
         repo_path=workspace,
         provider=args.provider,
@@ -144,7 +157,21 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
         cost_tracker=CostTracker(),
         force_setup=args.setup,
         permission_mode=args.mode,
+        session_id=args.resume,
+        conversation=conversation,
     )
+
+
+def resume_hint(session_id: str) -> str:
+    """Renders the lines printed on exit so a session can be picked up again.
+
+    Args:
+        session_id: Id the session was saved under.
+
+    Returns:
+        hint: The command that resumes it.
+    """
+    return f"Resume this session with:\n  ship --resume {session_id}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -156,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         exit_code: Process exit status.
     """
-    build_app(argv).run()
+    app = build_app(argv)
+    app.run()
+    # Printed after the interface has closed, where the terminal keeps it.
+    if app.conversation:
+        print(resume_hint(app.session_id))
     return EXIT_OK
 
 

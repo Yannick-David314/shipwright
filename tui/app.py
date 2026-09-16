@@ -21,7 +21,8 @@ Contains:
     ShipwrightApp.handle_line(): runs a command or starts a turn
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
     ShipwrightApp.build_loop(): builds the agent loop for one instruction
-    ShipwrightApp.remember_turn(): keeps a finished turn for later reasoning
+    ShipwrightApp.remember_turn(): keeps and saves a finished turn for later reasoning
+    ShipwrightApp.replay_conversation(): shows a resumed session's earlier messages
     ShipwrightApp.run_task(): runs one instruction off the UI thread
     ShipwrightApp.append_step(): mounts one activity row as a step completes
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
@@ -95,6 +96,7 @@ from tui.commands import (
 from tui.screens.composer import Composer
 from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
+from tui.sessions import STATE_DIR_ENV, new_session_id, save_session, sessions_dir
 from tui.theme import TOKEN_FALLBACKS, Palette, css_variables, palette_for
 from tui.transcript import resume
 from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
@@ -118,8 +120,6 @@ SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
 # crowd out the transcript the loop still has to fit in its own budget.
 HISTORY_TURN_LIMIT = 12
-# Set by the installed launcher to a directory kept inside the install.
-STATE_DIR_ENV = "SHIPWRIGHT_STATE_DIR"
 ONBOARDED_MARKER = "onboarded"
 PLAN_DECISION_TIMEOUT_S = 300.0
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
@@ -218,6 +218,8 @@ class ShipwrightApp(App[None]):
         palette: Palette | None = None,
         force_setup: bool = False,
         permission_mode: PermissionMode = PermissionMode.MANUAL,
+        session_id: str | None = None,
+        conversation: list[LoopMessage] | None = None,
     ) -> None:
         """Builds the interface for one checkout.
 
@@ -229,6 +231,8 @@ class ShipwrightApp(App[None]):
             palette: Colours to render with; detected from the terminal when None.
             force_setup: Show onboarding even when a credential is already set.
             permission_mode: How much the agent may do before it asks.
+            session_id: Id of a session being resumed; a new one is made when None.
+            conversation: Messages of the session being resumed, oldest first.
         """
         # Textual resolves CSS variables inside App.__init__, so the palette has
         # to exist before the base class is initialised.
@@ -245,7 +249,8 @@ class ShipwrightApp(App[None]):
         self.permission_mode = permission_mode
         self.active_loop: AgentLoop | None = None
         self.credential_verifier: Callable[[Provider, str], Verification] | None = None
-        self.conversation: list[LoopMessage] = []
+        self.session_id = session_id or new_session_id()
+        self.conversation: list[LoopMessage] = list(conversation or [])
         self.active_instruction = ""
 
     def get_css_variables(self) -> dict[str, str]:
@@ -347,6 +352,7 @@ class ShipwrightApp(App[None]):
         the providers already configured too.
         """
         self.register_commands()
+        self.replay_conversation()
         self.query_one(Composer).focus_input()
         onboarded = self.is_onboarded()
         first_run = not self.force_setup and (not onboarded or self.needs_setup())
@@ -682,6 +688,23 @@ class ShipwrightApp(App[None]):
         excess = len(self.conversation) - HISTORY_TURN_LIMIT * 2
         if excess > 0:
             del self.conversation[:excess]
+        # Saved after every turn, so quitting at any point leaves it resumable.
+        with suppress(OSError):
+            save_session(self.session_id, self.repo_path, self.conversation, sessions_dir())
+
+    def replay_conversation(self) -> None:
+        """Shows a resumed session's earlier messages before anything new is asked."""
+        if not self.conversation:
+            return
+        self.query_one("#region-hero").display = False
+        timeline = self.query_one(Timeline)
+        timeline.display = True
+        for message in self.conversation:
+            if message.role == "user":
+                timeline.mount(Static(Text(message.content), classes="instruction"))
+            else:
+                timeline.mount(Static(Text(f"{ANSWER_PREFIX}{message.content}")))
+        timeline.scroll_end(animate=False)
 
     def open_setup(self, argument: str) -> str:
         """Re-runs onboarding so a key or provider can be changed.

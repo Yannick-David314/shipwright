@@ -6,6 +6,8 @@ Contains:
     SESSIONS_SUBDIR: the folder sessions live in, inside the state directory
     SESSION_FILE_MODE: owner-only permissions for a saved session
     SESSION_ID_PATTERN: what a session id looks like
+    STATE_DIR_ENV: the variable naming the install's state directory
+    SESSIONS_DIR_ENV: the variable that overrides where sessions are kept
     sessions_dir(): where sessions are kept on this machine
     new_session_id(): a fresh id for a session
     save_session(): writes a session's conversation to disk
@@ -24,7 +26,10 @@ from agent.llm_client import Message
 SESSIONS_SUBDIR = "sessions"
 SESSION_FILE_MODE = 0o600
 SESSION_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+# Set by the installed launcher to a directory kept inside the install.
 STATE_DIR_ENV = "SHIPWRIGHT_STATE_DIR"
+# Points sessions somewhere else entirely; the test suite uses it.
+SESSIONS_DIR_ENV = "SHIPWRIGHT_SESSIONS_DIR"
 # Outside the installed launcher there is no state directory, so a run from a
 # checkout keeps its sessions where the install would.
 FALLBACK_STATE_DIR = Path.home() / ".local" / "share" / "shipwright" / "state"
@@ -43,6 +48,9 @@ def sessions_dir(environ: Mapping[str, str] | None = None) -> Path:
         path: Directory holding one file per session.
     """
     source = os.environ if environ is None else environ
+    override = source.get(SESSIONS_DIR_ENV, "").strip()
+    if override:
+        return Path(override)
     state = source.get(STATE_DIR_ENV, "").strip()
     return (Path(state) if state else FALLBACK_STATE_DIR) / SESSIONS_SUBDIR
 
