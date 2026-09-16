@@ -33,9 +33,10 @@ NEEDS_RELOGIN=0
 
 # --- logging -----------------------------------------------------------------
 #
-# The log reads like apt: one plain line per thing that happens, warnings as
-# "W:" and errors as "E:", with no timestamps, glyphs or echoed commands. On a
-# terminal the last line is a progress bar that every log line scrolls above:
+# The log reads like apt: one line per step once it is finished ("Checking
+# Docker... 29.8.0", "Setting up ship (1.1.1) ..."), warnings as "W:" and
+# errors as "E:". On a terminal the last line is a progress bar that every log
+# line scrolls above:
 #
 #   Progress: [ 42%] [#######################...............................]
 
@@ -67,14 +68,14 @@ clear_bar() {
 }
 
 say()    { clear_bar; printf '%s\n' "$*"; draw_bar; }
+# A step prints nothing when it starts; done_step prints its one line at the end.
 step() {
     STEP_NUMBER=$((STEP_NUMBER + 1))
     PERCENT=$(((STEP_NUMBER - 1) * 100 / TOTAL_STEPS))
-    say "$*..."
+    STEP_LABEL=$*
+    draw_bar
 }
-detail() { say "$*"; }
-ok()     { say "$*"; }
-skip()   { say "$*"; }
+done_step() { say "$STEP_LABEL... ${1:-Done}"; }
 warn()   { clear_bar; printf 'W: %s\n' "$*" >&2; draw_bar; }
 die()    { clear_bar; printf 'E: %s\n' "$*" >&2; exit 1; }
 
@@ -145,9 +146,6 @@ with_progress() {
                 split(substr(token, RSTART, RLENGTH), nm, "/")
                 if (!(stage in total)) { total[stage] = nm[2]; all += nm[2] }
                 if (nm[1] - 1 > done[stage]) { finished += nm[1] - 1 - done[stage]; done[stage] = nm[1] - 1 }
-                what = $0
-                sub(/^.*(\]|: ) */, "", what)
-                log_line("Step " nm[1] "/" nm[2] ": " what)
                 advance(int(finished * 100 / all))
                 next
             }
@@ -197,25 +195,21 @@ if [ "$MODE" = "uninstall" ]; then
     step "Removing launchers"
     for launcher in ship shipwright ship-update ship-uninstall; do
         if [ -e "$BIN_DIR/$launcher" ]; then
+            say "Removing $launcher ..."
             run rm -f "$BIN_DIR/$launcher"
-            ok "Removing $launcher"
         fi
     done
 
     step "Removing the container image"
     if command -v docker >/dev/null 2>&1 && $DOCKER image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+        say "Removing $IMAGE_NAME ..."
         run $DOCKER image rm -f "$IMAGE_NAME" >/dev/null
-        ok "Removing $IMAGE_NAME"
-    else
-        skip "No image to remove"
     fi
 
     step "Removing installed files"
     if [ -d "$INSTALL_HOME" ]; then
-        ok "Removing $INSTALL_HOME ($(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1))"
+        say "Removing $INSTALL_HOME ($(du -sh "$INSTALL_HOME" 2>/dev/null | cut -f1)) ..."
         run rm -rf "$INSTALL_HOME"
-    else
-        skip "No installed files to remove"
     fi
 
     step "Clearing stored provider keys"
@@ -224,23 +218,19 @@ if [ "$MODE" = "uninstall" ]; then
         | while read -r envfile; do
               grep -qE '^(export )?(ANTHROPIC|OPENAI)_API_KEY=.+' "$envfile" && echo "$envfile"
           done)
-    if [ -z "$KEY_FILES" ]; then
-        skip "No stored provider keys found"
-    else
-        say "Provider keys are stored in:"
-        echo "$KEY_FILES" | while read -r envfile; do detail "  $envfile"; done
-        if confirm "Remove the provider key lines from the files above?"; then
+    if [ -n "$KEY_FILES" ]; then
+        say "The following files hold provider keys:"
+        echo "$KEY_FILES" | while read -r envfile; do say "  $envfile"; done
+        if confirm "Remove these provider keys?"; then
             echo "$KEY_FILES" | while read -r envfile; do
                 sed -i -E '/^(export )?(ANTHROPIC|OPENAI)_API_KEY=/d' "$envfile"
                 if grep -qE '[^[:space:]]' "$envfile"; then
-                    ok "Clearing keys from $envfile"
+                    say "Clearing keys from $envfile ..."
                 else
                     rm -f "$envfile"
-                    ok "Removing $envfile"
+                    say "Removing $envfile ..."
                 fi
             done
-        else
-            skip "Keeping the stored keys"
         fi
     fi
 
@@ -254,13 +244,9 @@ step "Checking prerequisites"
 [ "$(uname -s)" = "Linux" ] || die "the sandbox requires Linux; found $(uname -s)"
 if [ -r /etc/os-release ]; then
     . /etc/os-release
-    ok "Found ${NAME:-Linux} ${VERSION_ID:-}"
-else
-    ok "Found $(uname -sr)"
 fi
-detail "Found kernel $(uname -r)"
 command -v git >/dev/null 2>&1 || die "git is required; install it and re-run"
-ok "Found git $(git --version | awk '{print $3}')"
+done_step
 
 # --- docker ------------------------------------------------------------------
 
@@ -280,20 +266,17 @@ if ! command -v docker >/dev/null 2>&1; then
 
   Then:  sh $0"
 fi
-ok "Found docker $(docker --version | sed 's/Docker version //; s/,.*//')"
+DOCKER_VERSION=$(docker --version | sed 's/Docker version //; s/,.*//')
 
 if docker info >/dev/null 2>&1; then
-    ok "Docker daemon is reachable"
+    :
 elif sudo docker info >/dev/null 2>&1; then
     # The daemon is up; this user just is not allowed to talk to its socket.
-    detail "Docker daemon is running, but $USER cannot use its socket"
     as_root usermod -aG docker "$USER"
-    ok "Added $USER to the docker group"
-    detail "Using sudo for docker until the next login"
+    warn "added $USER to the docker group; using sudo for docker until the next login"
     DOCKER="sudo docker"
     NEEDS_RELOGIN=1
 else
-    detail "Starting the Docker daemon"
     if [ -d /run/systemd/system ]; then
         as_root systemctl enable --now docker || true
     else
@@ -301,20 +284,21 @@ else
     fi
     sleep 2
     if docker info >/dev/null 2>&1; then
-        ok "Docker daemon started"
+        :
     elif sudo docker info >/dev/null 2>&1; then
         as_root usermod -aG docker "$USER"
-        ok "Docker daemon started; added $USER to the docker group"
+        warn "added $USER to the docker group; using sudo for docker until the next login"
         DOCKER="sudo docker"
         NEEDS_RELOGIN=1
     else
         die "the Docker daemon could not be started. Check: sudo systemctl status docker"
     fi
 fi
+done_step "$DOCKER_VERSION"
 
 # --- gVisor ------------------------------------------------------------------
 
-step "Checking the gVisor sandbox"
+step "Checking gVisor"
 if ! command -v runsc >/dev/null 2>&1; then
     die "gVisor (runsc) is required, and it is not installed.
 
@@ -335,11 +319,11 @@ if ! command -v runsc >/dev/null 2>&1; then
 
         sudo runsc install && sudo systemctl restart docker"
 fi
-ok "Found runsc $(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')"
+RUNSC_VERSION=$(runsc --version 2>/dev/null | head -1 | awk '{print $NF}')
 
 if $DOCKER info --format '{{range printf \"%s\" .Runtimes}}{{.}}{{end}}' 2>/dev/null | grep -q runsc \
     || $DOCKER info 2>/dev/null | grep -q runsc; then
-    ok "runsc is registered with Docker"
+    done_step "$RUNSC_VERSION"
 else
     die "runsc is installed but Docker does not know about it.
 
@@ -350,9 +334,9 @@ fi
 
 # --- sandbox probe -----------------------------------------------------------
 
-step "Starting a test container under gVisor"
+step "Testing the sandbox"
 if $DOCKER run --rm --runtime=runsc hello-world >/dev/null 2>&1; then
-    ok "gVisor sandbox works"
+    done_step
 else
     die "gVisor is registered but could not actually start a container.
 
@@ -385,11 +369,10 @@ else
         run git -C "$SRC_DIR" checkout --quiet "$REF"
     fi
 fi
-ok "Checked out $(git -C "$SRC_DIR" rev-parse --short HEAD)"
 
 # --- image -------------------------------------------------------------------
 
-step "Building the agent image"
+step "Building $IMAGE_NAME"
 if $DOCKER buildx version >/dev/null 2>&1; then
     BUILD_OUTPUT="--progress=plain"
 else
@@ -397,12 +380,13 @@ else
 fi
 # shellcheck disable=SC2086 # $DOCKER may be "sudo docker"; $BUILD_OUTPUT may be empty
 with_progress docker $DOCKER build $BUILD_OUTPUT -f "$SRC_DIR/docker/agent.Dockerfile" -t "$IMAGE_NAME" "$SRC_DIR"
-ok "Built $IMAGE_NAME ($($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}'))"
+done_step "Done ($($DOCKER image inspect "$IMAGE_NAME" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1048576}'))"
 
 # --- launchers ---------------------------------------------------------------
 
 step "Installing launchers"
 mkdir -p "$BIN_DIR"
+VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$SRC_DIR/agent/__init__.py")
 
 cat > "$BIN_DIR/ship" <<'LAUNCHER'
 #!/bin/sh
@@ -501,7 +485,7 @@ exec docker run --rm -it \
 LAUNCHER
 sed -i "s|@IMAGE_NAME@|$IMAGE_NAME|" "$BIN_DIR/ship"
 chmod +x "$BIN_DIR/ship"
-ok "Setting up ship"
+say "Setting up ship ($VERSION) ..."
 
 # Update fetches first and then runs the installer it fetched, so an update is
 # carried out by the new version's own steps rather than the ones installed.
@@ -513,11 +497,11 @@ git -C "$SRC_DIR" checkout --quiet FETCH_HEAD
 exec sh "$SRC_DIR/install.sh" update
 UPDATER
 chmod +x "$BIN_DIR/ship-update"
-ok "Setting up ship-update"
+say "Setting up ship-update ($VERSION) ..."
 
 printf '#!/bin/sh\nexec sh "%s/install.sh" uninstall\n' "$SRC_DIR" > "$BIN_DIR/ship-uninstall"
 chmod +x "$BIN_DIR/ship-uninstall"
-ok "Setting up ship-uninstall"
+say "Setting up ship-uninstall ($VERSION) ..."
 
 # --- done --------------------------------------------------------------------
 
