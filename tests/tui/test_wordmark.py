@@ -10,6 +10,8 @@ Contains:
     test_wordmark_uses_the_brand_blue(): the only colour used is the brand token
     test_monochrome_terminal_gets_no_colour(): a colourless terminal gets no style
     test_render_covers_every_line(): the rendered block carries all five rows
+    test_welcome_words_render_in_block_capitals(): the onboarding heading has glyphs
+    test_wordmark_draws_each_word_as_its_own_block(): lines stack with a gap
 """
 
 from tui.theme import BRAND_BLUE, DARK, MONOCHROME
@@ -17,6 +19,7 @@ from tui.widgets.wordmark import (
     BLOCK_FONT,
     GLYPH_HEIGHT,
     PROJECT_NAME,
+    WELCOME_WORDS,
     WORDMARK_LINES,
     Wordmark,
     render_word,
@@ -76,3 +79,20 @@ def test_render_covers_every_line() -> None:
 
     for line in WORDMARK_LINES:
         assert line in block
+
+
+def test_welcome_words_render_in_block_capitals() -> None:
+    """Asserts every character of the onboarding heading has a glyph of even rows."""
+    for word in WELCOME_WORDS:
+        rows = render_word(word)
+        assert len(rows) == GLYPH_HEIGHT
+        assert len({len(row) for row in rows}) == 1
+
+
+def test_wordmark_draws_each_word_as_its_own_block() -> None:
+    """Asserts a two-word mark draws both blocks, split by one blank line."""
+    block = Wordmark(palette=DARK, words=WELCOME_WORDS).render().plain
+
+    assert block.splitlines()[:GLYPH_HEIGHT] == list(render_word(WELCOME_WORDS[0]))
+    assert block.splitlines()[GLYPH_HEIGHT] == ""
+    assert block.splitlines()[GLYPH_HEIGHT + 1 :] == list(render_word(WELCOME_WORDS[1]))

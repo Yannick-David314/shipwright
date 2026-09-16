@@ -4,9 +4,13 @@ robot.py --- ascii mascot and the live status line it animates beside
 
 Contains:
     ROBOT_ART: the standing mascot shown on the idle screen
-    ROBOT_FRAMES: the frames the small mascot cycles while a run is working
+    ROBOT_FRAMES: the small robot turning on the spot while a run is working
     FRAME_INTERVAL_S: seconds between two frames
+    DOTS / DOT_EVERY: the typing dots and how often they step
+    VERB_EVERY: how many frames each verb stays on screen
     Phase: what the agent is currently doing
+    PHASE_VERBS: the playful verbs shown for each phase
+    verb_for(): picks the verb for a phase at one point in the animation
     phase_for_tool(): maps a dispatched tool onto the phase it represents
     Robot: the standing mascot
     StatusLine: animated mascot beside the phase the run is in
@@ -29,14 +33,22 @@ ROBOT_ART = (
     "     ╰─┬───┬─╯",
     "       ╹   ╹",
 )
+# The small robot turns on the spot: face, side, back, other side, face.
 ROBOT_FRAMES = (
-    "╾[◉‿◉]╼",
-    "╾[◉_◉]╼",
-    "╾[◉‿◉]╼",
-    "╾[-‿-]╼",
+    "[◉‿◉]",
+    "[◉‿ ]",
+    "[‿  ]",
+    "[   ]",
+    "[  ‿]",
+    "[ ‿◉]",
 )
-IDLE_FRAME = " [◉‿◉] "
-FRAME_INTERVAL_S = 0.22
+IDLE_FRAME = "[◉‿◉]"
+FRAME_INTERVAL_S = 0.18
+# Dots count up like someone typing, one step every DOT_EVERY frames.
+DOTS = ("", ".", "..", "...")
+DOT_EVERY = 2
+# A new verb every VERB_EVERY frames, about three seconds.
+VERB_EVERY = 16
 
 
 class Phase(StrEnum):
@@ -60,6 +72,39 @@ TOOL_PHASES: dict[str, Phase] = {
     "run_shell": Phase.RUNNING,
     "run_tests": Phase.RUNNING,
 }
+
+
+PHASE_VERBS: dict[Phase, tuple[str, ...]] = {
+    Phase.PLANNING: ("Planning", "Scheming", "Plotting", "Charting a course"),
+    Phase.REASONING: (
+        "Reasoning",
+        "Hatching",
+        "Vibecoding",
+        "Whirling",
+        "Pondering",
+        "Noodling",
+        "Cogitating",
+        "Tinkering",
+    ),
+    Phase.READING: ("Reading", "Skimming", "Spelunking", "Rummaging"),
+    Phase.EDITING: ("Editing", "Crafting", "Hammering", "Whittling"),
+    Phase.RUNNING: ("Running", "Whirring", "Crunching", "Churning"),
+    Phase.DONE: ("Done",),
+}
+
+
+def verb_for(phase: Phase, beat: int) -> str:
+    """Picks the verb shown for a phase at one point in the animation.
+
+    Args:
+        phase: What the agent is doing.
+        beat: How many verb changes have happened in this phase.
+
+    Returns:
+        verb: One of the phase's verbs, cycling in order.
+    """
+    verbs = PHASE_VERBS[phase]
+    return verbs[beat % len(verbs)]
 
 
 def phase_for_tool(tool_name: str) -> Phase:
@@ -112,20 +157,24 @@ class StatusLine(Static):
         self.update(self.render_text())
 
     def advance(self) -> None:
-        """Moves the mascot on by one frame."""
+        """Moves the animation on by one frame."""
         if not self.is_animating or not self.display:
             return
-        self.frame_index = (self.frame_index + 1) % len(ROBOT_FRAMES)
+        self.frame_index += 1
 
     def render_text(self) -> str:
-        """Renders the mascot beside the current phase.
+        """Renders the turning robot, a verb for the phase, and the typing dots.
 
         Returns:
-            line: Mascot frame followed by the phase, or a parked mascot.
+            line: Such as "[◉‿ ] Hatching..", or the parked robot once done.
         """
         if not self.is_animating:
-            return f"{IDLE_FRAME} {self.phase.value}"
-        return f"{ROBOT_FRAMES[self.frame_index]} {self.phase.value}…"
+            return f"{IDLE_FRAME} {verb_for(Phase.DONE, 0)}"
+        robot = ROBOT_FRAMES[self.frame_index % len(ROBOT_FRAMES)]
+        verb = verb_for(self.phase, self.frame_index // VERB_EVERY)
+        dots = DOTS[(self.frame_index // DOT_EVERY) % len(DOTS)]
+        # Padded, so the line does not twitch as the dots come and go.
+        return f"{robot} {verb}{dots:<3}"
 
     def watch_frame_index(self, frame_index: int) -> None:
         """Repaints only this line when the mascot moves.
@@ -142,6 +191,8 @@ class StatusLine(Static):
         Args:
             phase: What the agent is doing now.
         """
+        if phase is not self.phase:
+            self.frame_index = 0
         self.phase = phase
         self.is_animating = phase is not Phase.DONE
         self.update(self.render_text())

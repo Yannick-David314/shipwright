@@ -18,7 +18,6 @@ import pytest
 
 from tui.app import ShipwrightApp
 from tui.screens.composer import Composer
-from tui.screens.footer import FooterBar
 from tui.screens.timeline import Timeline
 from tui.widgets.robot import StatusLine
 from tui.widgets.wordmark import Wordmark
@@ -58,7 +57,6 @@ def _regions(app: ShipwrightApp) -> list[str]:
                     app.query_one(Timeline),
                     app.query_one(StatusLine),
                     app.query_one(Composer),
-                    app.query_one(FooterBar),
                 )
                 if widget.display
             ]
@@ -69,7 +67,7 @@ def _regions(app: ShipwrightApp) -> list[str]:
 
 def test_idle_view_is_the_centred_mark(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Asserts an idle window shows the mark and the input, and nothing more."""
-    assert _regions(_app(tmp_path, monkeypatch)) == ["Wordmark", "Composer", "FooterBar"]
+    assert _regions(_app(tmp_path, monkeypatch)) == ["Wordmark", "Composer"]
 
 
 def test_timeline_is_hidden_until_work_starts(

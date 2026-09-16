@@ -15,6 +15,7 @@ Contains:
     set_max_cost(): raises or lowers the run's spend ceiling live
     set_max_steps(): raises or lowers the run's iteration ceiling live
     USAGE_MODEL: usage line for the provider-switch command
+    INFERENCE_NOT_CONFIGURED: what a run or switch reports when no key is set
     ClientFactory: builds a completion backend for one provider
     parse_provider(): reads a provider name, returning None when unknown
     switch_model(): points the live run at another provider or model
@@ -37,6 +38,9 @@ COMMAND_PREFIX = "/"
 USAGE_MAX_COST = "usage: /max-cost <positive amount in USD>"
 USAGE_MAX_STEPS = "usage: /max-steps <positive step count>"
 USAGE_MODEL = "usage: /model [model-id]"
+# Shown instead of the credential's variable name: which provider is missing
+# is setup's business, not the transcript's.
+INFERENCE_NOT_CONFIGURED = "Inference is not configured. Run /setup to connect a model provider."
 
 
 class UnknownCommandError(Exception):
@@ -217,7 +221,7 @@ def switch_model(
     model = parts[1] if len(parts) > 1 else None
     try:
         client = factory(provider, model)
-    except MissingCredentialError as exc:
-        return str(exc)
+    except MissingCredentialError:
+        return INFERENCE_NOT_CONFIGURED
     loop.set_client(client)
     return f"now using {model or DEFAULT_MODELS[provider]}"

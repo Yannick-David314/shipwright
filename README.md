@@ -79,8 +79,9 @@ ship /srv/repos/service
 `ship` mounts **only the directory you open**. Nothing above it is visible to
 the agent — that is the containment boundary, not a heuristic.
 
-The first run asks which provider you want, takes the key masked, verifies it
-with one real completion, and stores it in that folder's `.env` with owner-only
+The first run opens a welcome screen with the terms to accept, then asks you to
+select your model provider and paste its key. The key is masked, verified with
+one real completion, and stored in that folder's `.env` with owner-only
 permissions. It never asks again.
 
 | Command | What it does |
@@ -351,9 +352,9 @@ mode, bypass included.
 `NO_COLOR` or a `TERM` the terminal reports as colourless drops the interface to
 a monochrome layout rather than printing escape codes.
 
-On first run, if neither `ANTHROPIC_API_KEY` nor `OPENAI_API_KEY` is set, a
-setup panel asks for one, masks it as you paste, and writes it to `.env` with
-owner-only permissions. It is never echoed into the transcript. The key applies
+On first run, with no provider key set, a welcome screen shows the terms, then a
+card asks you to select your model provider and paste its key. Pasting saves it:
+the key is masked, verified, and written to `.env` with owner-only permissions. It is never echoed into the transcript. The key applies
 immediately and is read back from `.env` on every later run, so you are asked
 once. A value exported in your shell always wins over the stored one.
 

@@ -9,6 +9,7 @@ Contains:
     BLOCK_FONT: one block-capital glyph per letter of the project name
     render_word(): renders a word as block-capital rows
     WORDMARK_LINES: the ASCII art shown on the boot screen
+    WELCOME_WORDS: the two lines the onboarding screen spells out
     Wordmark: boot-screen widget drawing the wordmark
     Wordmark.style_for_palette(): the colour the wordmark is drawn in
     Wordmark.render(): renders every wordmark line
@@ -31,6 +32,13 @@ BLOCK_FONT: dict[str, tuple[str, ...]] = {
     "R": ("█████", "█   █", "█████", "█  █ ", "█   █"),
     "G": ("█████", "█    ", "█  ██", "█   █", "█████"),
     "T": ("█████", "  █  ", "  █  ", "  █  ", "  █  "),
+    "E": ("█████", "█    ", "████ ", "█    ", "█████"),
+    "L": ("█    ", "█    ", "█    ", "█    ", "█████"),
+    "C": ("█████", "█    ", "█    ", "█    ", "█████"),
+    "O": ("█████", "█   █", "█   █", "█   █", "█████"),
+    "M": ("█   █", "██ ██", "█ █ █", "█   █", "█   █"),
+    "!": ("█", "█", "█", " ", "█"),
+    " ": ("  ", "  ", "  ", "  ", "  "),
 }
 
 
@@ -53,6 +61,7 @@ def render_word(word: str) -> tuple[str, ...]:
 
 
 WORDMARK_LINES = render_word(PROJECT_NAME)
+WELCOME_WORDS = ("WELCOME TO", "SHIPWRIGHT!")
 
 
 class Wordmark(Static):
@@ -62,15 +71,22 @@ class Wordmark(Static):
         palette: Palette deciding whether the wordmark is coloured at all.
     """
 
-    def __init__(self, palette: Palette | None = None, id: str | None = None) -> None:
+    def __init__(
+        self,
+        palette: Palette | None = None,
+        id: str | None = None,
+        words: tuple[str, ...] = (PROJECT_NAME,),
+    ) -> None:
         """Builds the wordmark for one terminal's colour capability.
 
         Args:
             palette: Colours to render with; detected from the terminal when None.
             id: Element id, so the layout can target the mark in CSS.
+            words: Lines of text to draw in block capitals, top to bottom.
         """
         super().__init__(id=id)
         self.palette = palette_for() if palette is None else palette
+        self.words = words
 
     def style_for_palette(self) -> str:
         """Returns the colour the wordmark is drawn in.
@@ -88,7 +104,10 @@ class Wordmark(Static):
         """
         style = self.style_for_palette()
         block = Text()
-        for line in WORDMARK_LINES:
-            block.append(line, style=style)
-            block.append("\n")
+        for index, word in enumerate(self.words):
+            if index:
+                block.append("\n")
+            for line in render_word(word):
+                block.append(line, style=style)
+                block.append("\n")
         return block

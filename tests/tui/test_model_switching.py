@@ -22,7 +22,7 @@ from agent.llm_client import (
     ScriptedLLM,
 )
 from agent.loop import AgentConfig, AgentLoop
-from tui.commands import USAGE_MODEL, switch_model
+from tui.commands import INFERENCE_NOT_CONFIGURED, USAGE_MODEL, switch_model
 
 
 def _loop(tmp_path: Path) -> AgentLoop:
@@ -94,7 +94,8 @@ def test_missing_credential_is_reported(tmp_path: Path) -> None:
 
     line = switch_model(_loop(tmp_path), "openai", build)
 
-    assert "OPENAI_API_KEY is not set" in line
+    assert line == INFERENCE_NOT_CONFIGURED
+    assert "OPENAI" not in line
 
 
 def test_bare_model_command_shows_usage(tmp_path: Path) -> None:

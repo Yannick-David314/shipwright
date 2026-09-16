@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-app.py --- Textual application composing the four regions of the interface
+app.py --- Textual application composing the regions of the interface
 
 Contains:
     DEFAULT_GATEWAY_URL: gateway the connection indicator polls by default
-    REGION_IDS: element ids for the four regions, in composition order
+    REGION_IDS: element ids for the main regions, in composition order
     ShipwrightApp: the terminal interface for one checkout
     ShipwrightApp.get_css_variables(): feeds the palette into Textual's tokens
-    ShipwrightApp.compose(): lays out wordmark, header, timeline, composer, footer
+    ShipwrightApp.compose(): lays out wordmark, timeline, status, composer and context
     ShipwrightApp.needs_setup(): whether onboarding should run at startup
-    ShipwrightApp.open_setup(): re-runs onboarding on demand
+    ShipwrightApp.open_setup(): re-runs provider setup on demand
+    ShipwrightApp.onboarding(): builds the onboarding screen for this checkout
+    ShipwrightApp.close_onboarding(): returns from onboarding to the home page
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
     ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
@@ -77,6 +79,7 @@ from agent.permissions import (
 from agent.planner import Plan, RepoPlanner, RepoReader, build_outline
 from agent.repo_map import RepoMap
 from tui.commands import (
+    INFERENCE_NOT_CONFIGURED,
     USAGE_MODEL,
     CommandRouter,
     UnknownCommandError,
@@ -86,7 +89,7 @@ from tui.commands import (
     switch_model,
 )
 from tui.screens.composer import Composer
-from tui.screens.footer import FooterBar
+from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
 from tui.transcript import resume
@@ -95,6 +98,7 @@ from tui.widgets.context_bar import ContextBar
 from tui.widgets.plan_panel import PlanPanel
 from tui.widgets.robot import Phase, Robot, StatusLine, phase_for_tool
 from tui.widgets.setup_panel import (
+    CredentialStatus,
     SetupPanel,
     Verification,
     all_providers,
@@ -107,11 +111,9 @@ DEFAULT_GATEWAY_URL = "http://localhost:4000"
 ANSWER_PREFIX = "● "
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
-SETUP_REOPENED = "pick a provider and paste a key; enter to save, esc to cancel"
 # Earlier turns replayed into each new run. Capped so a long session cannot
 # crowd out the transcript the loop still has to fit in its own budget.
 HISTORY_TURN_LIMIT = 12
-HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
@@ -122,10 +124,8 @@ MODE_MARKERS: dict[PermissionMode, str] = {
 }
 PLAN_ON_NOTICE = "plan mode on — runs propose steps and wait for [a] to accept"
 PLAN_OFF_NOTICE = "plan mode off — manual"
-SETUP_DONE_TEMPLATE = "{env_var} saved — you are ready to go"
-SETUP_SKIPPED_NOTICE = "setup skipped — set a provider key before starting a run"
-# The four regions, in the order they are composed down the screen.
-REGION_IDS = ("region-header", "region-timeline", "region-composer", "region-footer")
+# The regions, in the order they are composed down the screen.
+REGION_IDS = ("region-header", "region-timeline", "region-composer")
 
 
 class ShipwrightApp(App[None]):
@@ -150,14 +150,6 @@ class ShipwrightApp(App[None]):
         height: 1fr;
         align: center middle;
     }
-    #region-hero.compact {
-        height: auto;
-        padding-top: 1;
-    }
-    #region-hero.compact #hero-robot,
-    #region-hero.compact #hero-tagline {
-        display: none;
-    }
     #hero-mark {
         width: 100%;
         content-align: center middle;
@@ -168,14 +160,6 @@ class ShipwrightApp(App[None]):
         width: 100%;
         content-align: center middle;
         color: $accent;
-    }
-    #hero-tagline {
-        width: 100%;
-        content-align: center middle;
-        color: $text-muted;
-    }
-    #region-setup {
-        height: auto;
     }
     #region-timeline {
         height: 1fr;
@@ -203,9 +187,6 @@ class ShipwrightApp(App[None]):
     #region-context {
         height: 1;
         padding: 0 2;
-    }
-    #region-footer {
-        height: 1;
     }
     """
 
@@ -282,19 +263,9 @@ class ShipwrightApp(App[None]):
         hero = Vertical(
             Robot(id="hero-robot"),
             Wordmark(id="hero-mark"),
-            Label(HERO_TAGLINE, id="hero-tagline"),
             id="region-hero",
         )
-        if self.needs_setup():
-            hero.add_class("compact")
         yield hero
-
-        if self.needs_setup():
-            # A forced re-run is for changing a key, so offer configured providers too.
-            offered = all_providers() if self.force_setup else None
-            setup = SetupPanel(self.repo_path, missing=offered, verifier=self.credential_verifier)
-            setup.id = "region-setup"
-            yield setup
 
         timeline = Timeline()
         timeline.id = REGION_IDS[1]
@@ -314,11 +285,6 @@ class ShipwrightApp(App[None]):
         context.id = "region-context"
         yield context
 
-        bindings = [binding for binding in self.BINDINGS if isinstance(binding, Binding)]
-        footer = FooterBar(bindings)
-        footer.id = REGION_IDS[3]
-        yield footer
-
     def enter_working_view(self) -> None:
         """Swaps the idle hero for the transcript once work begins."""
         self.query_one("#region-hero").display = False
@@ -336,14 +302,42 @@ class ShipwrightApp(App[None]):
         self.router.register("setup", self.open_setup)
 
     def on_mount(self) -> None:
-        """Registers the slash commands and places the caret.
+        """Registers the slash commands, then opens onboarding or places the caret.
 
-        Onboarding focuses its own key field, so the composer only takes the
-        caret when there is no setup panel competing for it.
+        A first run gets the whole welcome, terms included. A forced re-run is
+        for changing a key, so it goes straight to provider setup and offers
+        the providers already configured too.
         """
         self.register_commands()
-        if not self.query(SetupPanel):
-            self.query_one(Composer).focus_input()
+        self.query_one(Composer).focus_input()
+        if self.needs_setup():
+            offered = all_providers() if self.force_setup else None
+            self.push_screen(self.onboarding(offered, show_terms=not self.force_setup))
+
+    def onboarding(
+        self, offered: list[CredentialStatus] | None, show_terms: bool
+    ) -> OnboardingScreen:
+        """Builds the onboarding screen for this checkout.
+
+        Args:
+            offered: Providers to list; the ones missing a key when None.
+            show_terms: Whether the terms come before provider setup.
+
+        Returns:
+            screen: Screen ready to push.
+        """
+        return OnboardingScreen(
+            self.repo_path,
+            offered=offered,
+            verifier=self.credential_verifier,
+            show_terms=show_terms,
+        )
+
+    def close_onboarding(self) -> None:
+        """Returns from onboarding to the home page with the caret in the composer."""
+        if isinstance(self.screen, OnboardingScreen):
+            self.pop_screen()
+        self.call_after_refresh(self.query_one(Composer).focus_input)
 
     def handle_line(self, text: str) -> str:
         """Runs a slash command, or reports that a turn should start.
@@ -446,8 +440,8 @@ class ShipwrightApp(App[None]):
             self.active_loop = loop
             result = loop.run(on_step=lambda step: self.call_from_thread(self.append_step, step))
             answer = result.final_answer or NO_ANSWER_NOTICE
-        except MissingCredentialError as exc:
-            answer = str(exc)
+        except MissingCredentialError:
+            answer = INFERENCE_NOT_CONFIGURED
         except RunawayRunError as exc:
             answer = f"halted: {exc}"
         except httpx.HTTPError as exc:
@@ -483,8 +477,8 @@ class ShipwrightApp(App[None]):
             model = parts[1]
         try:
             build_client(provider, model)
-        except MissingCredentialError as exc:
-            return str(exc)
+        except MissingCredentialError:
+            return INFERENCE_NOT_CONFIGURED
 
         self.provider = provider.value
         self.model = model
@@ -620,9 +614,7 @@ class ShipwrightApp(App[None]):
             event: Message naming the variable that was written.
         """
         event.stop()
-        self.query_one(SetupPanel).remove()
-        self.query_one(Timeline).mount(Label(SETUP_DONE_TEMPLATE.format(env_var=event.env_var)))
-        self.query_one(Composer).focus_input()
+        self.close_onboarding()
 
     def on_setup_panel_skipped(self, event: SetupPanel.Skipped) -> None:
         """Dismisses onboarding when the operator declines to enter a key.
@@ -631,9 +623,7 @@ class ShipwrightApp(App[None]):
             event: Message reporting that setup was dismissed.
         """
         event.stop()
-        self.query_one(SetupPanel).remove()
-        self.query_one("#region-hero").remove_class("compact")
-        self.query_one(Composer).focus_input()
+        self.close_onboarding()
 
     def remember_turn(self, instruction: str, answer: str) -> None:
         """Keeps a finished turn so later runs reason against the whole session.
@@ -660,20 +650,13 @@ class ShipwrightApp(App[None]):
             argument: Ignored; the command takes none.
 
         Returns:
-            line: What to tell the operator.
+            line: Empty once setup is open, since it takes over the screen.
         """
         del argument
-        if self.query(SetupPanel):
+        if isinstance(self.screen, OnboardingScreen):
             return SETUP_ALREADY_OPEN
-
-        panel = SetupPanel(
-            self.repo_path,
-            missing=all_providers(),
-            verifier=self.credential_verifier,
-        )
-        panel.id = "region-setup"
-        self.mount(panel, before=self.query_one(Timeline))
-        return SETUP_REOPENED
+        self.push_screen(self.onboarding(all_providers(), show_terms=False))
+        return ""
 
     def mode_label(self) -> str:
         """Renders the permission mode as the bar under the composer shows it.

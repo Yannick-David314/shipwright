@@ -21,7 +21,7 @@ import pytest
 
 from agent.llm_client import DEFAULT_MODELS, Provider
 from tui.app import PLAN_ON_NOTICE, ShipwrightApp
-from tui.commands import USAGE_MODEL
+from tui.commands import INFERENCE_NOT_CONFIGURED, USAGE_MODEL
 
 DOCUMENTED_COMMANDS = {"plan", "resume", "model", "max-cost", "max-steps"}
 
@@ -95,7 +95,7 @@ def test_model_without_a_key_is_refused(tmp_path: Path, monkeypatch: pytest.Monk
 
     line = _mounted(app, lambda: app.handle_line("/model openai"))
 
-    assert "OPENAI_API_KEY" in line
+    assert line == INFERENCE_NOT_CONFIGURED
     assert app.provider == "anthropic"
 
 

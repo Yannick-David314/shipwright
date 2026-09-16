@@ -6,13 +6,16 @@ Contains:
     SetupHarness: minimal app hosting just the setup panel
     test_saving_a_key_writes_the_env_file(): a pasted key reaches .env
     test_pasted_key_is_never_displayed(): the input masks what was typed
+    test_key_field_waits_for_a_provider(): the key stage opens only after a choice
+    test_dropdown_lists_product_names_only(): no identifiers or model names shown
 """
 
 import asyncio
 from pathlib import Path
 
+from textual import events
 from textual.app import App, ComposeResult
-from textual.widgets import Input
+from textual.widgets import Input, Select
 
 from agent.llm_client import Provider
 from tui.widgets.setup_panel import CredentialStatus, SetupPanel, Verification
@@ -47,7 +50,7 @@ class SetupHarness(App[None]):
 
 
 async def _save_key(repo_path: Path, key: str) -> str:
-    """Types a key into the panel and presses Save.
+    """Picks the provider, pastes a key, and waits for it to be saved.
 
     Args:
         repo_path: Checkout the panel writes its .env into.
@@ -58,10 +61,13 @@ async def _save_key(repo_path: Path, key: str) -> str:
     """
     app = SetupHarness(repo_path)
     async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(SetupPanel).choose(0)
+        await pilot.pause()
         entry = app.query_one("#setup-key", Input)
-        entry.value = key
+        entry.post_message(events.Paste(key))
+        await pilot.pause()
         rendered = str(entry.render())
-        await pilot.click("#setup-save")
         for _ in range(30):
             await pilot.pause()
             await asyncio.sleep(0.02)
@@ -71,10 +77,10 @@ async def _save_key(repo_path: Path, key: str) -> str:
 
 
 def test_saving_a_key_writes_the_env_file(keyless_repo: Path) -> None:
-    """Asserts pressing Save persists the pasted key into the checkout's .env."""
+    """Asserts pasting a key persists it into the checkout's .env, once."""
     asyncio.run(_save_key(keyless_repo, SAMPLE_KEY))
 
-    assert f"ANTHROPIC_API_KEY={SAMPLE_KEY}" in (keyless_repo / ".env").read_text()
+    assert (keyless_repo / ".env").read_text() == f"ANTHROPIC_API_KEY={SAMPLE_KEY}\n"
 
 
 def test_pasted_key_is_never_displayed(keyless_repo: Path) -> None:
@@ -82,3 +88,33 @@ def test_pasted_key_is_never_displayed(keyless_repo: Path) -> None:
     rendered = asyncio.run(_save_key(keyless_repo, SAMPLE_KEY))
 
     assert SAMPLE_KEY not in rendered
+
+
+def test_key_field_waits_for_a_provider(keyless_repo: Path) -> None:
+    """Asserts the key field is hidden until a provider is picked, then focused."""
+
+    async def drive() -> tuple[bool, bool, bool, bool]:
+        app = SetupHarness(keyless_repo)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            entry = app.query_one("#setup-key", Input)
+            before = (entry.display and entry.region.height > 0, app.focused is entry)
+            app.query_one(SetupPanel).choose(0)
+            await pilot.pause()
+            after = (entry.region.height > 0, app.focused is entry)
+            return (*before, *after)
+
+    assert asyncio.run(drive()) == (False, False, True, True)
+
+
+def test_dropdown_lists_product_names_only(keyless_repo: Path) -> None:
+    """Asserts the dropdown offers provider names, without identifiers or models."""
+
+    async def drive() -> list[str]:
+        app = SetupHarness(keyless_repo)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            select = app.query_one(Select)
+            return [str(prompt) for prompt, _ in select._options if _ is not Select.NULL]
+
+    assert asyncio.run(drive()) == ["Anthropic"]
