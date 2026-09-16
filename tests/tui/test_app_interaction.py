@@ -14,6 +14,7 @@ Contains:
     test_enter_opens_a_turn_and_clears_the_input(): Enter submits
     test_submitted_instruction_reaches_the_agent(): the loop actually runs
     test_missing_credential_is_reported_in_the_timeline(): no crash without a key
+    test_runs_from_the_interface_are_conversational(): chat is answered, not worked
 """
 
 import asyncio
@@ -167,3 +168,10 @@ def test_missing_credential_is_reported_in_the_timeline(
     answer = asyncio.run(_run())
 
     assert answer == INFERENCE_NOT_CONFIGURED
+
+
+def test_runs_from_the_interface_are_conversational(tmp_path: Path) -> None:
+    """Asserts a run started from the chat window may answer conversation directly."""
+    app = ShipwrightApp(_checkout(tmp_path), provider="anthropic")
+
+    assert app.build_loop("hi").config.conversational is True

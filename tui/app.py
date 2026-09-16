@@ -448,6 +448,8 @@ class ShipwrightApp(App[None]):
             repo_path=str(self.repo_path),
             task=instruction,
             cost_tracker=self.cost_tracker,
+            # A chat window gets greetings and questions, not only tasks.
+            conversational=True,
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
