@@ -4,10 +4,10 @@ app.py --- Textual application composing the four regions of the interface
 
 Contains:
     DEFAULT_GATEWAY_URL: gateway the connection indicator polls by default
-    REGION_IDS: element ids for the four regions, in composition order
+    REGION_IDS: element ids for the main regions, in composition order
     ShipwrightApp: the terminal interface for one checkout
     ShipwrightApp.get_css_variables(): feeds the palette into Textual's tokens
-    ShipwrightApp.compose(): lays out wordmark, header, timeline, composer, footer
+    ShipwrightApp.compose(): lays out wordmark, timeline, status, composer and context
     ShipwrightApp.needs_setup(): whether onboarding should run at startup
     ShipwrightApp.open_setup(): re-runs provider setup on demand
     ShipwrightApp.onboarding(): builds the onboarding screen for this checkout
@@ -88,7 +88,6 @@ from tui.commands import (
     switch_model,
 )
 from tui.screens.composer import Composer
-from tui.screens.footer import FooterBar
 from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
 from tui.theme import Palette, css_variables, palette_for
@@ -124,8 +123,8 @@ MODE_MARKERS: dict[PermissionMode, str] = {
 }
 PLAN_ON_NOTICE = "plan mode on — runs propose steps and wait for [a] to accept"
 PLAN_OFF_NOTICE = "plan mode off — manual"
-# The four regions, in the order they are composed down the screen.
-REGION_IDS = ("region-header", "region-timeline", "region-composer", "region-footer")
+# The regions, in the order they are composed down the screen.
+REGION_IDS = ("region-header", "region-timeline", "region-composer")
 
 
 class ShipwrightApp(App[None]):
@@ -187,9 +186,6 @@ class ShipwrightApp(App[None]):
     #region-context {
         height: 1;
         padding: 0 2;
-    }
-    #region-footer {
-        height: 1;
     }
     """
 
@@ -287,11 +283,6 @@ class ShipwrightApp(App[None]):
         context = ContextBar(self.model_label(), palette=self.palette, mode_label=self.mode_label())
         context.id = "region-context"
         yield context
-
-        bindings = [binding for binding in self.BINDINGS if isinstance(binding, Binding)]
-        footer = FooterBar(bindings)
-        footer.id = REGION_IDS[3]
-        yield footer
 
     def enter_working_view(self) -> None:
         """Swaps the idle hero for the transcript once work begins."""
