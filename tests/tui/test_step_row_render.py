@@ -10,6 +10,7 @@ Contains:
     test_failed_row_is_styled(): a failed row carries the error colour
     test_open_row_draws_a_bordered_card(): input and output sit in one box
     test_card_rows_line_up(): every card line is exactly as wide as the border
+    test_card_border_is_not_the_chat_box_blue(): cards are turquoise, the chat box blue
     test_diff_is_drawn_inside_the_card(): the change sits between IN and OUT
     test_added_and_removed_lines_are_green_and_red(): diff lines carry their colours
     test_long_diff_is_previewed(): a huge diff is cut short behind the toggle
@@ -183,3 +184,15 @@ def test_row_with_no_output_draws_one_line() -> None:
     row = StepRow("git_diff", {}, "", palette=DARK)
 
     assert "\n" not in row.render().plain
+
+
+def test_card_border_is_not_the_chat_box_blue() -> None:
+    """Asserts the card border is the turquoise highlight, not the chat box blue."""
+    row = StepRow("run_shell", {"command": "pytest -q"}, "3 passed", palette=DARK)
+    rendered = row.render()
+    corner = rendered.plain.index("╭")
+
+    styles = {str(span.style) for span in rendered.spans if span.start <= corner < span.end}
+
+    assert DARK.highlight in styles
+    assert DARK.accent not in styles
