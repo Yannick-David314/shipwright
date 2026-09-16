@@ -114,7 +114,6 @@ SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
 # crowd out the transcript the loop still has to fit in its own budget.
 HISTORY_TURN_LIMIT = 12
-HERO_TAGLINE = "describe a change and press enter"
 PLAN_DECISION_TIMEOUT_S = 300.0
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
@@ -161,11 +160,6 @@ class ShipwrightApp(App[None]):
         width: 100%;
         content-align: center middle;
         color: $accent;
-    }
-    #hero-tagline {
-        width: 100%;
-        content-align: center middle;
-        color: $text-muted;
     }
     #region-timeline {
         height: 1fr;
@@ -272,7 +266,6 @@ class ShipwrightApp(App[None]):
         hero = Vertical(
             Robot(id="hero-robot"),
             Wordmark(id="hero-mark"),
-            Label(HERO_TAGLINE, id="hero-tagline"),
             id="region-hero",
         )
         yield hero
