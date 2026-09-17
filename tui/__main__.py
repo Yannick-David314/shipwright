@@ -9,11 +9,14 @@ Contains:
     provider_choices(): the provider names the entrypoint accepts
     build_app(): builds the application from parsed arguments, loading .env first
     resume_hint(): the command printed on exit to resume the session
+    leave(): ends the process without waiting on a run still in flight
     main(): opens the terminal interface and returns its exit status
 """
 
 import argparse
+import os
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 from agent import __version__
@@ -184,11 +187,34 @@ def main(argv: list[str] | None = None) -> int:
         exit_code: Process exit status.
     """
     app = build_app(argv)
-    app.run()
+    # Ctrl+C is how people close a terminal app; it is not a crash.
+    with suppress(KeyboardInterrupt):
+        app.run()
     # Printed after the interface has closed, where the terminal keeps it.
     if app.conversation:
         print(resume_hint(app.session_id))
-    return EXIT_OK
+    return leave(app, EXIT_OK)
+
+
+def leave(app: ShipwrightApp, exit_code: int) -> int:
+    """Ends the process without waiting on a run that is still parked.
+
+    A run thread can be sitting in a provider call that will not return for
+    some time. The interface is already gone and each turn was saved as it
+    finished, so the process leaves rather than hanging on it.
+
+    Args:
+        app: Application that has just closed.
+        exit_code: Status to exit with.
+
+    Returns:
+        exit_code: The same status, when there is nothing left running.
+    """
+    if app.active_loop is None:
+        return exit_code
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

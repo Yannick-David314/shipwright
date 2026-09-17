@@ -17,6 +17,7 @@ Contains:
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
     ShipwrightApp.start_or_queue(): starts a turn, or queues it behind the one running
+    ShipwrightApp.on_unmount(): releases a waiting run as the interface closes
     ShipwrightApp.action_stop_run(): stops the run in flight from the keyboard
     ShipwrightApp.request_stop(): asks the run to stop and drops the queue
     ShipwrightApp.on_composer_stop_requested(): stops the run from the composer control
@@ -688,6 +689,16 @@ class ShipwrightApp(App[None]):
         timeline.mount(panel)
         timeline.scroll_end(animate=False)
         panel.focus()
+
+    def on_unmount(self) -> None:
+        """Releases anything still waiting on the interface as it goes away.
+
+        A run parked on an approval, or between steps, would otherwise keep the
+        process alive after the window has closed.
+        """
+        self.stop_flag.set()
+        for panel in self.query(ApprovalPanel):
+            panel.action_deny()
 
     def action_stop_run(self) -> None:
         """Stops the run in flight, leaving what it has already done in place."""
