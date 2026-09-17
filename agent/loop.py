@@ -12,6 +12,8 @@ Contains:
     AgentLoop._parse_step(): splits model output into a step
     AgentLoop._render_step(): replays a past step as the model's own turn
     AgentLoop._act(): runs the chosen tool and captures output
+    AgentLoop._stopped(): whether the operator asked the run to stop
+    AgentLoop._stopped_result(): closes a stopped run with what it did
     AgentLoop._is_reply(): whether a closing step is a conversational reply
     AgentLoop._record_cost(): accumulates one completion's spend
     AgentLoop._plan_approved(): asks the gate whether a plan may execute
@@ -91,7 +93,12 @@ TOOL_USAGE_INSTRUCTIONS = (
     "files it did not ask for, and do not edit anything it did not mention.\n\n"
     "Never answer FINAL before you have used a tool: inspect the checkout "
     "first, make the change, then finish with\n\n"
-    "FINAL: <one sentence describing the change you made>\n\n"
+    "FINAL: <summary>\n\n"
+    "The summary is for someone who did not watch you work. Write a few short "
+    "lines: what you changed, file by file, and what each change does; how you "
+    "did it where that is not obvious; what you ran to check it and what it "
+    "said; and anything you left undone or could not verify. Describe only what "
+    "you actually did through the tools. No selling it, no restating the task.\n\n"
     "The paths above are only examples of the format. Use the paths from the "
     "task and from what the tools actually show you.\n\n"
     "Only the tool names listed above exist; anything else is rejected."
@@ -292,6 +299,8 @@ class AgentConfig:
         conversational: Let the model answer conversation directly with
             REPLY:, which never needs a tool, instead of treating every
             message as a task.
+        stop_requested: Asked between steps whether to stop. A stopped run
+            returns what it has done so far instead of carrying on.
     """
 
     repo_path: str
@@ -307,6 +316,7 @@ class AgentConfig:
     cost_tracker: CostTracker | None = None
     require_tool_before_final: bool = True
     conversational: bool = False
+    stop_requested: Callable[[], bool] | None = None
 
 
 class AgentLoop:
@@ -351,9 +361,15 @@ class AgentLoop:
         started = time.time()
         logger.info("run %s started: %s", self._run_id, self.config.task[:80])
         while True:
+            if self._stopped():
+                return self._stopped_result(started)
             self.config.breaker.check(len(self._transcript), self._cost_usd)
             self.config.breaker.check_progress(self._consecutive_failures)
             step = self._think()
+            # Asked to stop while the model was answering: that answer is no
+            # longer wanted, so it is dropped rather than acted on.
+            if self._stopped():
+                return self._stopped_result(started)
             self._transcript.append(step)
             if not step.tool_name:
                 if (
@@ -379,6 +395,8 @@ class AgentLoop:
                     input_tokens=self._input_tokens,
                     output_tokens=self._output_tokens,
                 )
+            if self._stopped():
+                continue
             before = self._snapshot_for(step)
             output = self._act(step)
             self._tool_calls += 1
@@ -609,6 +627,34 @@ class AgentLoop:
             output: Text the tool returned.
         """
         step.observation = output
+
+    def _stopped_result(self, started: float) -> RunResult:
+        """Closes a stopped run with whatever it managed to do.
+
+        Args:
+            started: When the run began.
+
+        Returns:
+            result: The run so far, with no final answer.
+        """
+        logger.info("run %s stopped after %d steps", self._run_id, len(self._transcript))
+        return RunResult(
+            final_answer=None,
+            steps=self._transcript,
+            started_at=started,
+            ended_at=time.time(),
+            total_cost_usd=self._cost_usd,
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+        )
+
+    def _stopped(self) -> bool:
+        """Reports whether the operator has asked the run to stop.
+
+        Returns:
+            stopped: True once a stop has been requested.
+        """
+        return self.config.stop_requested is not None and self.config.stop_requested()
 
     def _is_reply(self, step: Step) -> bool:
         """Reports whether a closing step is a conversational reply, not a finished task.

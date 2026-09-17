@@ -77,7 +77,8 @@ ship /srv/repos/service
 ```
 
 `ship` mounts **only the directory you open**. Nothing above it is visible to
-the agent — that is the containment boundary, not a heuristic.
+the agent — that is the containment boundary, not a heuristic. The container
+runs as you, so anything the agent writes is yours to read and edit afterwards.
 
 The first run opens a welcome screen with the terms to accept, then asks you to
 select your model provider and paste its key. The key is masked, verified with
@@ -91,7 +92,7 @@ permissions. It never asks again.
 | `ship-update` | Rebuild from the latest source |
 | `ship --setup` | Change provider or API key |
 | `ship --mode bypass` | Start in a permission mode (`manual`, `edit`, `plan`, `bypass`) |
-| `ship --resume <id>` | Pick up a saved session; the id is printed when you exit |
+| `ship --resume <id>` | Reopen a saved session in full; the id is printed when you exit |
 | `ship-uninstall` | Remove shipwright |
 
 ### Update
@@ -288,11 +289,12 @@ a turn showing what the agent did and the diff it produced.
 
 <sub>Captures above predate the terminal interface; new ones are pending.</sub>
 
-Each turn collapses the run into activity rows — `Read`, `Edited`, `Ran` — that
-open to reveal that step's output, followed by the agent's answer, the token
-count, and the diff for that turn alone. The composer stays live while a run is
-in flight: anything typed meanwhile is queued and starts when the agent frees
-up, and the send arrow becomes a square for the duration.
+Each turn collapses the run into activity cards — `Read`, `Edited`, `Ran` — each
+holding what went in, the diff it produced, and what came out, followed by a
+summary of what the turn changed and how it was checked. The composer stays live
+while a run is in flight: anything typed meanwhile waits in a `queued` box above
+the chat box and starts when the agent frees up. A run can be interrupted with
+`esc`, or the red square beside the chat box, which also drops the queue.
 
 ### Using it
 
@@ -312,8 +314,9 @@ Once it is open:
 1. The line under the composer shows how full the context is, the model, and
    the permission mode.
 2. Type a message and press Enter. Chat gets a reply; the agent only reads or
-   changes the checkout when you ask it to. Anything typed while a run is
-   in flight is queued and starts when the agent frees up.
+   changes the checkout when you ask it to. Anything typed while a run is in
+   flight waits in a `queued` box and starts when the agent frees up, and `esc`
+   stops the run in flight.
 3. Slash commands adjust the run without restarting it:
 
 | Command | What it does |

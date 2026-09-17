@@ -16,13 +16,19 @@ Contains:
     ShipwrightApp.close_onboarding(): returns from onboarding to the home page
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
+    ShipwrightApp.start_or_queue(): starts a turn, or queues it behind the one running
+    ShipwrightApp.action_stop_run(): stops the run in flight from the keyboard
+    ShipwrightApp.request_stop(): asks the run to stop and drops the queue
+    ShipwrightApp.on_composer_stop_requested(): stops the run from the composer control
+    ShipwrightApp.show_queued(): shows a queued message above the composer
+    ShipwrightApp.on_composer_queued(): shows what the composer queued
     ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
     ShipwrightApp.on_composer_submitted(): routes a submitted line
     ShipwrightApp.handle_line(): runs a command or starts a turn
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
     ShipwrightApp.build_loop(): builds the agent loop for one instruction
     ShipwrightApp.remember_turn(): keeps and saves a finished turn for later reasoning
-    ShipwrightApp.replay_conversation(): shows a resumed session's earlier messages
+    ShipwrightApp.replay_conversation(): redraws a resumed session's turns in full
     ShipwrightApp.run_task(): runs one instruction off the UI thread
     ShipwrightApp.append_step(): mounts one activity row as a step completes
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
@@ -47,6 +53,7 @@ Contains:
 """
 
 import os
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -58,7 +65,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Label, Static
+from textual.widgets import Static
 
 from agent.circuit_breaker import CircuitBreaker, RunawayRunError
 from agent.cost_tracker import CostTracker
@@ -96,7 +103,14 @@ from tui.commands import (
 from tui.screens.composer import Composer
 from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
-from tui.sessions import STATE_DIR_ENV, new_session_id, save_session, sessions_dir
+from tui.sessions import (
+    STATE_DIR_ENV,
+    SavedStep,
+    SavedTurn,
+    new_session_id,
+    save_session,
+    sessions_dir,
+)
 from tui.theme import TOKEN_FALLBACKS, Palette, css_variables, palette_for
 from tui.transcript import resume
 from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
@@ -115,6 +129,7 @@ from tui.widgets.wordmark import Wordmark
 
 DEFAULT_GATEWAY_URL = "http://localhost:4000"
 ANSWER_PREFIX = "● "
+STOPPED_NOTICE = "stopped"
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
@@ -122,6 +137,7 @@ SETUP_ALREADY_OPEN = "setup is already open"
 HISTORY_TURN_LIMIT = 12
 ONBOARDED_MARKER = "onboarded"
 PLAN_DECISION_TIMEOUT_S = 300.0
+QUEUED_TITLE = "queued"
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
     PermissionMode.MANUAL: "⏸",
@@ -188,6 +204,18 @@ class ShipwrightApp(App[None]):
         padding: 0 2;
         color: $activity;
     }
+    #region-queue {
+        height: auto;
+        max-height: 12;
+        padding: 0 2;
+    }
+    #region-queue .queued {
+        height: auto;
+        padding: 0 1;
+        border: round $border-subtle;
+        border-title-color: $text-muted;
+        color: $text-muted;
+    }
     #region-composer {
         height: 3;
     }
@@ -207,6 +235,7 @@ class ShipwrightApp(App[None]):
         Binding("ctrl+l", "screenshot", "Screenshot"),
         # Priority, so the composer's own focus handling never swallows it.
         Binding("shift+tab", "cycle_mode", "Mode", priority=True),
+        Binding("escape", "stop_run", "Stop the run"),
     ]
 
     def __init__(
@@ -219,7 +248,7 @@ class ShipwrightApp(App[None]):
         force_setup: bool = False,
         permission_mode: PermissionMode = PermissionMode.MANUAL,
         session_id: str | None = None,
-        conversation: list[LoopMessage] | None = None,
+        turns: list[SavedTurn] | None = None,
     ) -> None:
         """Builds the interface for one checkout.
 
@@ -232,7 +261,7 @@ class ShipwrightApp(App[None]):
             force_setup: Show onboarding even when a credential is already set.
             permission_mode: How much the agent may do before it asks.
             session_id: Id of a session being resumed; a new one is made when None.
-            conversation: Messages of the session being resumed, oldest first.
+            turns: Turns of the session being resumed, oldest first.
         """
         # Textual resolves CSS variables inside App.__init__, so the palette has
         # to exist before the base class is initialised.
@@ -250,7 +279,12 @@ class ShipwrightApp(App[None]):
         self.active_loop: AgentLoop | None = None
         self.credential_verifier: Callable[[Provider, str], Verification] | None = None
         self.session_id = session_id or new_session_id()
-        self.conversation: list[LoopMessage] = list(conversation or [])
+        self.turns: list[SavedTurn] = list(turns or [])
+        self.conversation: list[LoopMessage] = [
+            message for turn in self.turns for message in turn.messages()
+        ]
+        self.live_steps: list[SavedStep] = []
+        self.stop_flag = threading.Event()
         self.active_instruction = ""
 
     def get_css_variables(self) -> dict[str, str]:
@@ -319,6 +353,8 @@ class ShipwrightApp(App[None]):
         status.id = "region-status"
         status.display = False
         yield status
+
+        yield Vertical(id="region-queue")
 
         composer = Composer()
         composer.id = REGION_IDS[2]
@@ -403,8 +439,44 @@ class ShipwrightApp(App[None]):
         if routed is not None:
             self.show_notice(routed)
             return routed
-        self.start_turn_for(text)
+        self.start_or_queue(text)
         return text
+
+    def start_or_queue(self, instruction: str) -> None:
+        """Starts a turn, or queues the instruction when a run is already going.
+
+        The composer queues what it sees typed while busy, but two submissions
+        can both be on their way before the first turn starts, so the app makes
+        the final call. Only one run ever works on the checkout at a time.
+
+        Args:
+            instruction: What the operator asked the agent to do.
+        """
+        composer = self.query_one(Composer)
+        if composer.is_busy:
+            composer.pending.append(instruction)
+            self.show_queued(instruction)
+            return
+        self.start_turn_for(instruction)
+
+    def show_queued(self, instruction: str) -> None:
+        """Shows a queued message above the composer until its turn starts.
+
+        Args:
+            instruction: Message waiting for the current run to finish.
+        """
+        box = Static(Text(instruction), classes="queued")
+        box.border_title = QUEUED_TITLE
+        self.query_one("#region-queue").mount(box)
+
+    def on_composer_queued(self, event: Composer.Queued) -> None:
+        """Shows a message the composer queued because a run was in flight.
+
+        Args:
+            event: Message carrying the queued instruction.
+        """
+        event.stop()
+        self.show_queued(event.instruction)
 
     def show_notice(self, notice: str) -> None:
         """Writes a slash command's reply into the transcript.
@@ -435,6 +507,12 @@ class ShipwrightApp(App[None]):
         status = self.query_one(StatusLine)
         status.display = True
         status.set_phase(Phase.PLANNING)
+        # Busy from this moment, not from when the worker thread gets going: a
+        # message sent in between would otherwise start a second run. The stop
+        # flag is cleared here too, for the same reason: a stop pressed after
+        # this point belongs to this run.
+        self.stop_flag.clear()
+        self.query_one(Composer).mark_busy()
         self.run_task(instruction)
 
     def build_loop(self, instruction: str) -> AgentLoop:
@@ -459,6 +537,7 @@ class ShipwrightApp(App[None]):
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
+        config.stop_requested = self.stop_flag.is_set
         config.tool_gate = self.tool_gate()
         config.escape_gate = self.approve_escape
         client = build_client(Provider(self.provider), self.model)
@@ -477,17 +556,19 @@ class ShipwrightApp(App[None]):
             instruction: What the operator asked the agent to do.
         """
         try:
-            composer = self.query_one(Composer)
+            self.query_one(Composer)
         except NoMatches:
             # The interface was torn down while this run was starting; there is
             # nothing left to report progress to.
             return
-        self.call_from_thread(composer.mark_busy)
         try:
             loop = self.build_loop(instruction)
             self.active_loop = loop
             result = loop.run(on_step=lambda step: self.call_from_thread(self.append_step, step))
-            answer = result.final_answer or NO_ANSWER_NOTICE
+            if result.final_answer:
+                answer = result.final_answer
+            else:
+                answer = STOPPED_NOTICE if self.stop_flag.is_set() else NO_ANSWER_NOTICE
         except MissingCredentialError:
             answer = INFERENCE_NOT_CONFIGURED
         except RunawayRunError as exc:
@@ -608,6 +689,33 @@ class ShipwrightApp(App[None]):
         timeline.scroll_end(animate=False)
         panel.focus()
 
+    def action_stop_run(self) -> None:
+        """Stops the run in flight, leaving what it has already done in place."""
+        self.request_stop()
+
+    def request_stop(self) -> None:
+        """Asks the run in flight to stop at its next step.
+
+        Anything already queued behind it is dropped: stopping is for taking
+        back control, not for working through the rest of the queue.
+        """
+        composer = self.query_one(Composer)
+        if not composer.is_busy:
+            return
+        self.stop_flag.set()
+        composer.pending.clear()
+        self.query("#region-queue .queued").remove()
+        self.query_one(StatusLine).set_phase(Phase.DONE)
+
+    def on_composer_stop_requested(self, event: Composer.StopRequested) -> None:
+        """Stops the run when the composer's stop control is used.
+
+        Args:
+            event: Notice that the stop control was clicked.
+        """
+        event.stop()
+        self.request_stop()
+
     def on_approval_panel_decided(self, event: ApprovalPanel.Decided) -> None:
         """Hands the keyboard back to the composer once a call is answered.
 
@@ -683,6 +791,8 @@ class ShipwrightApp(App[None]):
         """
         if not instruction:
             return
+        self.turns.append(SavedTurn(instruction, answer, list(self.live_steps)))
+        self.live_steps.clear()
         self.conversation.append(LoopMessage(role="user", content=instruction))
         self.conversation.append(LoopMessage(role="assistant", content=answer))
         excess = len(self.conversation) - HISTORY_TURN_LIMIT * 2
@@ -690,20 +800,34 @@ class ShipwrightApp(App[None]):
             del self.conversation[:excess]
         # Saved after every turn, so quitting at any point leaves it resumable.
         with suppress(OSError):
-            save_session(self.session_id, self.repo_path, self.conversation, sessions_dir())
+            save_session(self.session_id, self.repo_path, self.turns, sessions_dir())
 
     def replay_conversation(self) -> None:
-        """Shows a resumed session's earlier messages before anything new is asked."""
-        if not self.conversation:
+        """Redraws a resumed session exactly as it was left.
+
+        Each turn comes back whole: the message, the activity cards with their
+        input, diff and output, and the answer that closed it.
+        """
+        if not self.turns:
             return
         self.query_one("#region-hero").display = False
         timeline = self.query_one(Timeline)
         timeline.display = True
-        for message in self.conversation:
-            if message.role == "user":
-                timeline.mount(Static(Text(message.content), classes="instruction"))
-            else:
-                timeline.mount(Static(Text(f"{ANSWER_PREFIX}{message.content}")))
+        for turn in self.turns:
+            timeline.mount(Static(Text(turn.instruction), classes="instruction"))
+            timeline.start_turn(turn.instruction)
+            for step in turn.steps:
+                row = StepRow(
+                    step.tool_name,
+                    step.tool_args,
+                    step.observation,
+                    palette=self.palette,
+                    diff=step.diff,
+                )
+                timeline.record_step(row)
+                timeline.mount(row)
+            timeline.finish_turn(turn.answer)
+            timeline.mount(Static(Text(f"{ANSWER_PREFIX}{turn.answer}")))
         timeline.scroll_end(animate=False)
 
     def open_setup(self, argument: str) -> str:
@@ -800,6 +924,9 @@ class ShipwrightApp(App[None]):
         )
         timeline.record_step(row)
         timeline.mount(row)
+        self.live_steps.append(
+            SavedStep(step.tool_name, dict(step.tool_args), step.observation, step.diff)
+        )
         timeline.scroll_end(animate=False)
         self.refresh_context_bar()
 
@@ -812,7 +939,9 @@ class ShipwrightApp(App[None]):
         self.remember_turn(self.active_instruction, answer)
         timeline = self.query_one(Timeline)
         timeline.finish_turn(answer)
-        timeline.mount(Label(f"{ANSWER_PREFIX}{answer}"))
+        # Text, not markup: a summary may hold brackets, and it may run to
+        # several lines.
+        timeline.mount(Static(Text(f"{ANSWER_PREFIX}{answer}")))
         timeline.scroll_end(animate=False)
         self.query_one(StatusLine).stop()
         self.refresh_context_bar()
@@ -820,6 +949,9 @@ class ShipwrightApp(App[None]):
         composer.mark_idle()
         queued = composer.take_next()
         if queued is not None:
+            boxes = self.query("#region-queue .queued")
+            if boxes:
+                boxes.first().remove()
             self.start_turn_for(queued)
 
     def on_composer_submitted(self, event: Composer.Submitted) -> None:

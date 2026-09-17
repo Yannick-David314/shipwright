@@ -158,6 +158,8 @@ CSS_VARIABLE_NAMES: dict[str, str] = {
 TOKEN_FALLBACKS: dict[str, str] = {
     "caution": "warning",
     "activity": "accent",
+    "border-subtle": "border-blurred",
+    "panel-border": "border-blurred",
 }
 
 

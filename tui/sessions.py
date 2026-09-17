@@ -10,8 +10,11 @@ Contains:
     SESSIONS_DIR_ENV: the variable that overrides where sessions are kept
     sessions_dir(): where sessions are kept on this machine
     new_session_id(): a fresh id for a session
-    save_session(): writes a session's conversation to disk
-    load_session(): reads a saved session's conversation back
+    SavedStep: one tool call as it was recorded
+    SavedTurn: one instruction, the steps it took, and the answer
+    SavedTurn.messages(): the turn as the two messages the model replays
+    save_session(): writes a session's turns to disk
+    load_session(): reads a session's turns back
 """
 
 import json
@@ -19,6 +22,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.llm_client import Message
@@ -55,6 +59,49 @@ def sessions_dir(environ: Mapping[str, str] | None = None) -> Path:
     return (Path(state) if state else FALLBACK_STATE_DIR) / SESSIONS_SUBDIR
 
 
+@dataclass
+class SavedStep:
+    """Records one tool call exactly as the timeline drew it.
+
+    Attributes:
+        tool_name: Tool the agent dispatched.
+        tool_args: Arguments it was dispatched with.
+        observation: Output the tool returned.
+        diff: Diff the step produced, empty when it changed nothing.
+    """
+
+    tool_name: str
+    tool_args: dict[str, str] = field(default_factory=dict)
+    observation: str = ""
+    diff: str = ""
+
+
+@dataclass
+class SavedTurn:
+    """Records one instruction, everything it did, and the answer it gave.
+
+    Attributes:
+        instruction: What the operator asked for.
+        answer: What the agent reported back.
+        steps: Tool calls the turn made, in order.
+    """
+
+    instruction: str
+    answer: str = ""
+    steps: list[SavedStep] = field(default_factory=list)
+
+    def messages(self) -> list[Message]:
+        """Renders the turn as the pair of messages the model replays.
+
+        Returns:
+            messages: The instruction and the answer, in that order.
+        """
+        return [
+            Message(role="user", content=self.instruction),
+            Message(role="assistant", content=self.answer),
+        ]
+
+
 def new_session_id() -> str:
     """Returns a fresh id, short enough to type back in.
 
@@ -64,15 +111,16 @@ def new_session_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def save_session(
-    session_id: str, repo_path: Path, conversation: list[Message], directory: Path
-) -> Path:
-    """Writes a session's conversation to disk, replacing any earlier save.
+def save_session(session_id: str, repo_path: Path, turns: list[SavedTurn], directory: Path) -> Path:
+    """Writes a session's turns to disk, replacing any earlier save.
+
+    Whole turns are saved, not just the messages, so resuming can redraw the
+    activity cards and diffs the operator saw the first time.
 
     Args:
         session_id: Id the session is saved under.
         repo_path: Directory the session worked in.
-        conversation: Messages exchanged so far, oldest first.
+        turns: Turns taken so far, oldest first.
         directory: Folder sessions are kept in.
 
     Returns:
@@ -83,22 +131,40 @@ def save_session(
     payload = {
         "id": session_id,
         "repo": str(repo_path),
-        "messages": [{"role": m.role, "content": m.content} for m in conversation],
+        "turns": [
+            {
+                "instruction": turn.instruction,
+                "answer": turn.answer,
+                "steps": [
+                    {
+                        "tool_name": step.tool_name,
+                        "tool_args": step.tool_args,
+                        "observation": step.observation,
+                        "diff": step.diff,
+                    }
+                    for step in turn.steps
+                ],
+            }
+            for turn in turns
+        ],
     }
     path.write_text(json.dumps(payload, indent=2))
     path.chmod(SESSION_FILE_MODE)
     return path
 
 
-def load_session(session_id: str, directory: Path) -> list[Message]:
-    """Reads a saved session's conversation back.
+def load_session(session_id: str, directory: Path) -> list[SavedTurn]:
+    """Reads a saved session's turns back.
+
+    A session saved before turns were recorded holds messages alone; those are
+    read back as turns with no steps rather than refused.
 
     Args:
         session_id: Id the session was saved under.
         directory: Folder sessions are kept in.
 
     Returns:
-        conversation: The saved messages, oldest first.
+        turns: The saved turns, oldest first.
 
     Raises:
         LookupError: The id is malformed or no session was saved under it.
@@ -109,4 +175,15 @@ def load_session(session_id: str, directory: Path) -> list[Message]:
     if not path.is_file():
         raise LookupError(f"no saved session {session_id}")
     payload = json.loads(path.read_text())
-    return [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
+    if "turns" not in payload:
+        messages = payload.get("messages", [])
+        pairs = zip(messages[::2], messages[1::2], strict=False)
+        return [SavedTurn(instruction=a["content"], answer=b["content"]) for a, b in pairs]
+    return [
+        SavedTurn(
+            instruction=turn["instruction"],
+            answer=turn["answer"],
+            steps=[SavedStep(**step) for step in turn["steps"]],
+        )
+        for turn in payload["turns"]
+    ]
