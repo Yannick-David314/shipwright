@@ -16,6 +16,7 @@ Contains:
     ShipwrightApp.close_onboarding(): returns from onboarding to the home page
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
+    ShipwrightApp.start_or_queue(): starts a turn, or queues it behind the one running
     ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
     ShipwrightApp.on_composer_submitted(): routes a submitted line
     ShipwrightApp.handle_line(): runs a command or starts a turn
@@ -403,8 +404,24 @@ class ShipwrightApp(App[None]):
         if routed is not None:
             self.show_notice(routed)
             return routed
-        self.start_turn_for(text)
+        self.start_or_queue(text)
         return text
+
+    def start_or_queue(self, instruction: str) -> None:
+        """Starts a turn, or queues the instruction when a run is already going.
+
+        The composer queues what it sees typed while busy, but two submissions
+        can both be on their way before the first turn starts, so the app makes
+        the final call. Only one run ever works on the checkout at a time.
+
+        Args:
+            instruction: What the operator asked the agent to do.
+        """
+        composer = self.query_one(Composer)
+        if composer.is_busy:
+            composer.pending.append(instruction)
+            return
+        self.start_turn_for(instruction)
 
     def show_notice(self, notice: str) -> None:
         """Writes a slash command's reply into the transcript.
@@ -435,6 +452,9 @@ class ShipwrightApp(App[None]):
         status = self.query_one(StatusLine)
         status.display = True
         status.set_phase(Phase.PLANNING)
+        # Busy from this moment, not from when the worker thread gets going: a
+        # message sent in between would otherwise start a second run.
+        self.query_one(Composer).mark_busy()
         self.run_task(instruction)
 
     def build_loop(self, instruction: str) -> AgentLoop:
@@ -477,12 +497,11 @@ class ShipwrightApp(App[None]):
             instruction: What the operator asked the agent to do.
         """
         try:
-            composer = self.query_one(Composer)
+            self.query_one(Composer)
         except NoMatches:
             # The interface was torn down while this run was starting; there is
             # nothing left to report progress to.
             return
-        self.call_from_thread(composer.mark_busy)
         try:
             loop = self.build_loop(instruction)
             self.active_loop = loop
