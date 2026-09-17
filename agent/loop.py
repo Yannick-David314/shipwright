@@ -13,6 +13,7 @@ Contains:
     AgentLoop._render_step(): replays a past step as the model's own turn
     AgentLoop._act(): runs the chosen tool and captures output
     AgentLoop._stopped(): whether the operator asked the run to stop
+    AgentLoop._stopped_result(): closes a stopped run with what it did
     AgentLoop._is_reply(): whether a closing step is a conversational reply
     AgentLoop._record_cost(): accumulates one completion's spend
     AgentLoop._plan_approved(): asks the gate whether a plan may execute
@@ -356,19 +357,14 @@ class AgentLoop:
         logger.info("run %s started: %s", self._run_id, self.config.task[:80])
         while True:
             if self._stopped():
-                logger.info("run %s stopped after %d steps", self._run_id, len(self._transcript))
-                return RunResult(
-                    final_answer=None,
-                    steps=self._transcript,
-                    started_at=started,
-                    ended_at=time.time(),
-                    total_cost_usd=self._cost_usd,
-                    input_tokens=self._input_tokens,
-                    output_tokens=self._output_tokens,
-                )
+                return self._stopped_result(started)
             self.config.breaker.check(len(self._transcript), self._cost_usd)
             self.config.breaker.check_progress(self._consecutive_failures)
             step = self._think()
+            # Asked to stop while the model was answering: that answer is no
+            # longer wanted, so it is dropped rather than acted on.
+            if self._stopped():
+                return self._stopped_result(started)
             self._transcript.append(step)
             if not step.tool_name:
                 if (
@@ -626,6 +622,26 @@ class AgentLoop:
             output: Text the tool returned.
         """
         step.observation = output
+
+    def _stopped_result(self, started: float) -> RunResult:
+        """Closes a stopped run with whatever it managed to do.
+
+        Args:
+            started: When the run began.
+
+        Returns:
+            result: The run so far, with no final answer.
+        """
+        logger.info("run %s stopped after %d steps", self._run_id, len(self._transcript))
+        return RunResult(
+            final_answer=None,
+            steps=self._transcript,
+            started_at=started,
+            ended_at=time.time(),
+            total_cost_usd=self._cost_usd,
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+        )
 
     def _stopped(self) -> bool:
         """Reports whether the operator has asked the run to stop.

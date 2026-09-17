@@ -220,9 +220,11 @@ def test_stop_control_shows_only_while_working(tmp_path: Path) -> None:
             await pilot.pause()
             stop = app.query_one(f"#{STOP_ID}")
             idle = stop.display and stop.region.width > 0
+            app.gate.clear()
             app.query_one(Composer).submit("one")
             await pilot.pause()
             busy = stop.region.width > 0
+            app.gate.set()
             await _wait_until_idle(app, pilot)
             return idle, busy, stop.region.width > 0
 
