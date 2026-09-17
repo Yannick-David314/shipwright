@@ -25,7 +25,7 @@ Contains:
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
     ShipwrightApp.build_loop(): builds the agent loop for one instruction
     ShipwrightApp.remember_turn(): keeps and saves a finished turn for later reasoning
-    ShipwrightApp.replay_conversation(): shows a resumed session's earlier messages
+    ShipwrightApp.replay_conversation(): redraws a resumed session's turns in full
     ShipwrightApp.run_task(): runs one instruction off the UI thread
     ShipwrightApp.append_step(): mounts one activity row as a step completes
     ShipwrightApp.finish_run(): closes the turn and starts any queued work
@@ -99,7 +99,14 @@ from tui.commands import (
 from tui.screens.composer import Composer
 from tui.screens.onboarding import OnboardingScreen
 from tui.screens.timeline import Timeline
-from tui.sessions import STATE_DIR_ENV, new_session_id, save_session, sessions_dir
+from tui.sessions import (
+    STATE_DIR_ENV,
+    SavedStep,
+    SavedTurn,
+    new_session_id,
+    save_session,
+    sessions_dir,
+)
 from tui.theme import TOKEN_FALLBACKS, Palette, css_variables, palette_for
 from tui.transcript import resume
 from tui.widgets.approval_panel import ESCAPE_TOOL, ApprovalPanel
@@ -235,7 +242,7 @@ class ShipwrightApp(App[None]):
         force_setup: bool = False,
         permission_mode: PermissionMode = PermissionMode.MANUAL,
         session_id: str | None = None,
-        conversation: list[LoopMessage] | None = None,
+        turns: list[SavedTurn] | None = None,
     ) -> None:
         """Builds the interface for one checkout.
 
@@ -248,7 +255,7 @@ class ShipwrightApp(App[None]):
             force_setup: Show onboarding even when a credential is already set.
             permission_mode: How much the agent may do before it asks.
             session_id: Id of a session being resumed; a new one is made when None.
-            conversation: Messages of the session being resumed, oldest first.
+            turns: Turns of the session being resumed, oldest first.
         """
         # Textual resolves CSS variables inside App.__init__, so the palette has
         # to exist before the base class is initialised.
@@ -266,7 +273,11 @@ class ShipwrightApp(App[None]):
         self.active_loop: AgentLoop | None = None
         self.credential_verifier: Callable[[Provider, str], Verification] | None = None
         self.session_id = session_id or new_session_id()
-        self.conversation: list[LoopMessage] = list(conversation or [])
+        self.turns: list[SavedTurn] = list(turns or [])
+        self.conversation: list[LoopMessage] = [
+            message for turn in self.turns for message in turn.messages()
+        ]
+        self.live_steps: list[SavedStep] = []
         self.active_instruction = ""
 
     def get_css_variables(self) -> dict[str, str]:
@@ -739,6 +750,8 @@ class ShipwrightApp(App[None]):
         """
         if not instruction:
             return
+        self.turns.append(SavedTurn(instruction, answer, list(self.live_steps)))
+        self.live_steps.clear()
         self.conversation.append(LoopMessage(role="user", content=instruction))
         self.conversation.append(LoopMessage(role="assistant", content=answer))
         excess = len(self.conversation) - HISTORY_TURN_LIMIT * 2
@@ -746,20 +759,34 @@ class ShipwrightApp(App[None]):
             del self.conversation[:excess]
         # Saved after every turn, so quitting at any point leaves it resumable.
         with suppress(OSError):
-            save_session(self.session_id, self.repo_path, self.conversation, sessions_dir())
+            save_session(self.session_id, self.repo_path, self.turns, sessions_dir())
 
     def replay_conversation(self) -> None:
-        """Shows a resumed session's earlier messages before anything new is asked."""
-        if not self.conversation:
+        """Redraws a resumed session exactly as it was left.
+
+        Each turn comes back whole: the message, the activity cards with their
+        input, diff and output, and the answer that closed it.
+        """
+        if not self.turns:
             return
         self.query_one("#region-hero").display = False
         timeline = self.query_one(Timeline)
         timeline.display = True
-        for message in self.conversation:
-            if message.role == "user":
-                timeline.mount(Static(Text(message.content), classes="instruction"))
-            else:
-                timeline.mount(Static(Text(f"{ANSWER_PREFIX}{message.content}")))
+        for turn in self.turns:
+            timeline.mount(Static(Text(turn.instruction), classes="instruction"))
+            timeline.start_turn(turn.instruction)
+            for step in turn.steps:
+                row = StepRow(
+                    step.tool_name,
+                    step.tool_args,
+                    step.observation,
+                    palette=self.palette,
+                    diff=step.diff,
+                )
+                timeline.record_step(row)
+                timeline.mount(row)
+            timeline.finish_turn(turn.answer)
+            timeline.mount(Static(Text(f"{ANSWER_PREFIX}{turn.answer}")))
         timeline.scroll_end(animate=False)
 
     def open_setup(self, argument: str) -> str:
@@ -856,6 +883,9 @@ class ShipwrightApp(App[None]):
         )
         timeline.record_step(row)
         timeline.mount(row)
+        self.live_steps.append(
+            SavedStep(step.tool_name, dict(step.tool_args), step.observation, step.diff)
+        )
         timeline.scroll_end(animate=False)
         self.refresh_context_bar()
 

@@ -144,10 +144,10 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
     except NotADirectoryError as exc:
         parser.error(str(exc))
     load_env_file(workspace)
-    conversation = None
+    turns = None
     if args.resume is not None:
         try:
-            conversation = load_session(args.resume, sessions_dir())
+            turns = load_session(args.resume, sessions_dir())
         except LookupError as exc:
             parser.error(str(exc))
     return ShipwrightApp(
@@ -158,7 +158,7 @@ def build_app(argv: list[str] | None = None) -> ShipwrightApp:
         force_setup=args.setup,
         permission_mode=args.mode,
         session_id=args.resume,
-        conversation=conversation,
+        turns=turns,
     )
 
 
