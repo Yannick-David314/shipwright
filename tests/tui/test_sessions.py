@@ -15,10 +15,13 @@ Contains:
     test_resume_with_an_unknown_id_fails_at_parse_time(): a typo is reported, not ignored
     test_exit_prints_how_to_resume(): the id is left in the terminal on the way out
     test_ctrl_c_exits_without_a_traceback(): an interrupt is not a crash
+    test_unwritable_session_directory_is_reported(): a silent save failure is not silent
+    test_unreadable_session_says_why(): a session it cannot read explains itself
 """
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -187,3 +190,38 @@ def test_ctrl_c_exits_without_a_traceback(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("tui.__main__.build_app", lambda argv: app)
 
     assert main([str(tmp_path)]) == 0
+
+
+def test_unwritable_session_directory_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asserts a session that cannot be saved says so, rather than failing quietly."""
+    if os.geteuid() == 0:
+        pytest.skip("root writes anywhere, so there is nothing to report")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    sessions.chmod(0o500)
+    monkeypatch.setenv("SHIPWRIGHT_SESSIONS_DIR", str(sessions))
+    app = ShipwrightApp(tmp_path)
+
+    async def _run() -> list[str]:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.remember_turn("hi", "Hi! What are we building?")
+            await pilot.pause()
+            return [str(notice.render()) for notice in app.query(".notice")]
+
+    shown = asyncio.run(_run())
+    sessions.chmod(0o700)
+
+    assert len(shown) == 1
+    assert "not being saved" in shown[0]
+    assert str(sessions) in shown[0]
+
+
+def test_unreadable_session_says_why(tmp_path: Path) -> None:
+    """Asserts a session file that cannot be parsed is refused with a reason."""
+    (tmp_path / "abcdef012345.json").write_text("{not json")
+
+    with pytest.raises(LookupError, match="not readable JSON"):
+        load_session("abcdef012345", tmp_path)

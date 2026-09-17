@@ -12,6 +12,7 @@ Contains:
     AgentLoop._parse_step(): splits model output into a step
     AgentLoop._render_step(): replays a past step as the model's own turn
     AgentLoop._act(): runs the chosen tool and captures output
+    AgentLoop._note_verification(): tracks whether edits have been checked
     AgentLoop._stopped(): whether the operator asked the run to stop
     AgentLoop._stopped_result(): closes a stopped run with what it did
     AgentLoop._is_reply(): whether a closing step is a conversational reply
@@ -91,8 +92,11 @@ TOOL_USAGE_INSTRUCTIONS = (
     "replaces everything, so anything you leave out is lost.\n\n"
     "Do only what the task asks. Do not add tests, scaffolding, dependencies or "
     "files it did not ask for, and do not edit anything it did not mention.\n\n"
+    "Check your own work before you finish. After editing, run the tests or the "
+    "command that exercises what you changed, or read the changed file back, and "
+    "fix whatever comes up. Keep going until it is right.\n\n"
     "Never answer FINAL before you have used a tool: inspect the checkout "
-    "first, make the change, then finish with\n\n"
+    "first, make the change, check it, then finish with\n\n"
     "FINAL: <summary>\n\n"
     "The summary is for someone who did not watch you work. Write a few short "
     "lines: what you changed, file by file, and what each change does; how you "
@@ -115,6 +119,15 @@ CONVERSATION_INSTRUCTIONS = (
 )
 TRUNCATED_OBSERVATION_NOTE = "[older observation trimmed to fit the context budget]"
 MAX_UNGROUNDED_FINALS = 2
+MAX_UNVERIFIED_FINALS = 2
+# Tools that count as checking work: running it, or reading back what changed.
+EDITING_TOOLS = frozenset({"edit_file", "write_file", "apply_patch"})
+CHECKING_TOOLS = frozenset({"run_tests", "run_shell", "read_file", "git_diff"})
+UNVERIFIED_FINAL_NOTE = (
+    "You changed files and have not checked the result since. Run the tests, or "
+    "the command that exercises what you touched, or read the changed file back, "
+    "and fix anything that comes up before answering FINAL."
+)
 UNGROUNDED_FINAL_NOTE = (
     "You have not used a single tool yet, so you have not seen this checkout and "
     "cannot know whether the task is done. Inspect the repository and make the "
@@ -304,6 +317,9 @@ class AgentConfig:
         require_tool_before_final: Refuse a final answer from a run that has
             not called a single tool, so the agent cannot report work it
             never did.
+        verify_before_final: Refuse a final answer while the run has edits it
+            has not checked, so it tests or re-reads its own work first. The
+            interface turns this on; a scripted run decides for itself.
         conversational: Let the model answer conversation directly with
             REPLY:, which never needs a tool, instead of treating every
             message as a task.
@@ -323,6 +339,7 @@ class AgentConfig:
     breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
     cost_tracker: CostTracker | None = None
     require_tool_before_final: bool = True
+    verify_before_final: bool = False
     conversational: bool = False
     stop_requested: Callable[[], bool] | None = None
 
@@ -354,6 +371,8 @@ class AgentLoop:
         self._consecutive_failures = 0
         self._tool_calls = 0
         self._ungrounded_finals = 0
+        self._unverified_finals = 0
+        self._unchecked_edits = False
         logger.debug("agent loop initialised for %s", config.repo_path)
 
     def run(self, on_step: Callable[[Step], None] | None = None) -> RunResult:
@@ -393,6 +412,18 @@ class AgentLoop:
                     if on_step is not None:
                         on_step(step)
                     continue
+                if (
+                    not self._is_reply(step)
+                    and self.config.verify_before_final
+                    and self._unchecked_edits
+                    and self._unverified_finals < MAX_UNVERIFIED_FINALS
+                ):
+                    self._unverified_finals += 1
+                    self._observe(step, UNVERIFIED_FINAL_NOTE)
+                    logger.info("run %s refused a final answer with unchecked edits", self._run_id)
+                    if on_step is not None:
+                        on_step(step)
+                    continue
                 ended = time.time()
                 logger.info("run %s finished after %d steps", self._run_id, len(self._transcript))
                 return RunResult(
@@ -414,6 +445,8 @@ class AgentLoop:
             if not failed:
                 step.diff = self._diff_for(step, before)
             self._consecutive_failures = self._consecutive_failures + 1 if failed else 0
+            if not failed:
+                self._note_verification(step.tool_name)
             logger.info("run %s step %d tool=%s", self._run_id, step.index, step.tool_name)
             if on_step is not None:
                 on_step(step)
@@ -647,6 +680,20 @@ class AgentLoop:
             output: Text the tool returned.
         """
         step.observation = output
+
+    def _note_verification(self, tool_name: str) -> None:
+        """Tracks whether the run still has changes it has not checked.
+
+        Editing marks the work unchecked; running it, or reading back what
+        changed, marks it checked again.
+
+        Args:
+            tool_name: Tool that just ran without failing.
+        """
+        if tool_name in EDITING_TOOLS:
+            self._unchecked_edits = True
+        elif tool_name in CHECKING_TOOLS:
+            self._unchecked_edits = False
 
     def _stopped_result(self, started: float) -> RunResult:
         """Closes a stopped run with whatever it managed to do.
