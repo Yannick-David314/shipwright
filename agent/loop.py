@@ -124,6 +124,14 @@ REPEATED_CALL_NOTE = (
     "This exact call already failed the same way. Repeating it will not help: "
     "use a different tool or different arguments."
 )
+# A command can succeed and print nothing. Said plainly, so the model reads it
+# as an answer rather than as a call that never happened.
+EMPTY_OUTPUT_NOTE = "(no output)"
+REPEATED_SUCCESS_NOTE = (
+    "You have already made this exact call and it returned the same thing. "
+    "Repeating it tells you nothing new: change the arguments, try another "
+    "approach, or finish."
+)
 PARSE_RETRY_HINT = (
     "Your last reply had no Action: and no FINAL:. "
     "Respond with exactly one Action: or one FINAL: and nothing else."
@@ -342,6 +350,7 @@ class AgentLoop:
         self._output_tokens = 0
         self._dispatcher = ToolDispatcher(Path(config.repo_path), config.escape_gate)
         self._failed_calls: set[tuple[str, str]] = set()
+        self._succeeded_calls: set[tuple[str, str]] = set()
         self._consecutive_failures = 0
         self._tool_calls = 0
         self._ungrounded_finals = 0
@@ -449,7 +458,12 @@ class AgentLoop:
         messages = [*self.config.history, Message(role="user", content=self.config.task)]
         for step in self._transcript:
             messages.append(Message(role="assistant", content=self._render_step(step)))
-            if step.observation:
+            # A tool call always gets an observation back, even an empty one:
+            # without it the model cannot tell the call from one never made.
+            if step.tool_name:
+                observation = step.observation or EMPTY_OUTPUT_NOTE
+                messages.append(Message(role="user", content=f"Observation: {observation}"))
+            elif step.observation:
                 messages.append(Message(role="user", content=f"Observation: {step.observation}"))
         return messages
 
@@ -561,7 +575,13 @@ class AgentLoop:
         signature = (step.tool_name, str(sorted(step.tool_args.items())))
         if result.ok:
             self._failed_calls.discard(signature)
-            return result.output[:MAX_TOOL_OUTPUT_CHARS]
+            output = result.output[:MAX_TOOL_OUTPUT_CHARS]
+            if not output.strip():
+                output = EMPTY_OUTPUT_NOTE
+            if signature in self._succeeded_calls:
+                return f"{output}\n{REPEATED_SUCCESS_NOTE}"
+            self._succeeded_calls.add(signature)
+            return output
         repeated = signature in self._failed_calls
         self._failed_calls.add(signature)
         error = f"{TOOL_ERROR_PREFIX}{result.error}"

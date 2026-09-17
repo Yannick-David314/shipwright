@@ -14,6 +14,7 @@ Contains:
     test_sessions_saved_before_steps_still_load(): an older save is read as turns
     test_resume_with_an_unknown_id_fails_at_parse_time(): a typo is reported, not ignored
     test_exit_prints_how_to_resume(): the id is left in the terminal on the way out
+    test_ctrl_c_exits_without_a_traceback(): an interrupt is not a crash
 """
 
 import asyncio
@@ -23,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from agent.llm_client import Message
-from tui.__main__ import build_app, resume_hint
+from tui.__main__ import build_app, main, resume_hint
 from tui.app import ShipwrightApp
 from tui.screens.timeline import Timeline
 from tui.sessions import (
@@ -172,3 +173,17 @@ def test_sessions_saved_before_steps_still_load(tmp_path: Path) -> None:
     )
 
     assert load_session("abcdef012345", tmp_path) == [SavedTurn("hi", "Hi! What are we building?")]
+
+
+def test_ctrl_c_exits_without_a_traceback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Asserts an interrupt closes the interface quietly and still prints the hint."""
+
+    class Interrupted(ShipwrightApp):
+        def run(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+            raise KeyboardInterrupt
+
+    app = Interrupted(tmp_path)
+    app.remember_turn("hi", "Hi! What are we building?")
+    monkeypatch.setattr("tui.__main__.build_app", lambda argv: app)
+
+    assert main([str(tmp_path)]) == 0
