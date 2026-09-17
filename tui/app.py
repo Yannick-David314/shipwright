@@ -29,6 +29,7 @@ Contains:
     ShipwrightApp.start_turn_for(): opens a turn and dispatches it to the agent
     ShipwrightApp.build_loop(): builds the agent loop for one instruction
     ShipwrightApp.remember_turn(): keeps and saves a finished turn for later reasoning
+    ShipwrightApp.report_save_failure(): says once that the session is not being saved
     ShipwrightApp.replay_conversation(): redraws a resumed session's turns in full
     ShipwrightApp.run_task(): runs one instruction off the UI thread
     ShipwrightApp.append_step(): mounts one activity row as a step completes
@@ -131,6 +132,9 @@ from tui.widgets.wordmark import Wordmark
 DEFAULT_GATEWAY_URL = "http://localhost:4000"
 ANSWER_PREFIX = "● "
 STOPPED_NOTICE = "stopped"
+SAVE_FAILED_TEMPLATE = (
+    "this session is not being saved to {path} ({reason}), so --resume will not find it"
+)
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
@@ -286,6 +290,7 @@ class ShipwrightApp(App[None]):
         ]
         self.live_steps: list[SavedStep] = []
         self.stop_flag = threading.Event()
+        self.save_failure_reported = False
         self.active_instruction = ""
 
     def get_css_variables(self) -> dict[str, str]:
@@ -810,8 +815,24 @@ class ShipwrightApp(App[None]):
         if excess > 0:
             del self.conversation[:excess]
         # Saved after every turn, so quitting at any point leaves it resumable.
-        with suppress(OSError):
+        # A failure here is said out loud: a session silently not saved is one
+        # the operator only finds out about when --resume cannot find it.
+        try:
             save_session(self.session_id, self.repo_path, self.turns, sessions_dir())
+        except OSError as exc:
+            self.report_save_failure(exc)
+
+    def report_save_failure(self, exc: OSError) -> None:
+        """Says once that this session is not being saved, and why.
+
+        Args:
+            exc: What went wrong writing the session.
+        """
+        if self.save_failure_reported:
+            return
+        self.save_failure_reported = True
+        reason = exc.strerror or str(exc)
+        self.show_notice(SAVE_FAILED_TEMPLATE.format(path=sessions_dir(), reason=reason))
 
     def replay_conversation(self) -> None:
         """Redraws a resumed session exactly as it was left.

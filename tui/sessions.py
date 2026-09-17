@@ -174,7 +174,14 @@ def load_session(session_id: str, directory: Path) -> list[SavedTurn]:
     path = directory / f"{session_id}.json"
     if not path.is_file():
         raise LookupError(f"no saved session {session_id}")
-    payload = json.loads(path.read_text())
+    try:
+        body = path.read_text()
+    except OSError as exc:
+        raise LookupError(f"cannot read session {session_id}: {exc.strerror or exc}") from exc
+    try:
+        payload = json.loads(body)
+    except ValueError as exc:
+        raise LookupError(f"session {session_id} is not readable JSON: {exc}") from exc
     if "turns" not in payload:
         messages = payload.get("messages", [])
         pairs = zip(messages[::2], messages[1::2], strict=False)
