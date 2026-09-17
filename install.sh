@@ -469,8 +469,13 @@ fi
 
 mkdir -p "$STATE_DIR"
 
+# As you, not as root: anything the agent writes into the directory has to be
+# yours to read, edit and delete afterwards. HOME points somewhere writable
+# because that user has no home inside the container.
 exec docker run --rm -it \
     --runtime runsc \
+    --user "$(id -u):$(id -g)" \
+    --env HOME=/tmp \
     --workdir /workspace \
     --mount "type=bind,source=$WORKSPACE,target=/workspace" \
     --mount "type=bind,source=$STATE_DIR,target=/state" \
