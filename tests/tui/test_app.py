@@ -11,6 +11,7 @@ Contains:
     test_setup_panel_appears_without_any_key(): a keyless env prompts for setup
     test_blank_line_starts_nothing(): whitespace never opens a turn
     test_palette_reaches_textual_tokens(): the project palette themes the app
+    test_monochrome_palette_borrows_textual_defaults(): blank fields still resolve
     test_chat_box_border_is_the_wordmark_blue(): focused or not, the box is brand blue
     test_working_line_has_its_own_colour(): the status line is not the blue
 """
@@ -130,13 +131,20 @@ def test_palette_reaches_textual_tokens(tmp_path: Path) -> None:
     assert variables["panel-border"] == DARK.panel_border
 
 
-def test_monochrome_palette_emits_no_tokens(tmp_path: Path) -> None:
-    """Asserts a colourless terminal falls back to Textual's own defaults."""
+def test_monochrome_palette_borrows_textual_defaults(tmp_path: Path) -> None:
+    """Asserts a colourless terminal takes Textual's own colours, not the palette's.
+
+    Tokens the stylesheets use must still resolve, or no screen parses at all,
+    so a blank palette field borrows the built-in token instead of vanishing.
+    """
     from tui.theme import MONOCHROME
 
     app = ShipwrightApp(tmp_path, provider="anthropic", palette=MONOCHROME)
+    variables = app.get_css_variables()
 
-    assert "panel-border" not in app.get_css_variables()
+    assert variables["panel-border"] == variables["border-blurred"]
+    assert variables["caution"] == variables["warning"]
+    assert DARK.panel_border not in variables.values()
 
 
 def test_chat_box_border_is_the_wordmark_blue(
