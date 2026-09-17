@@ -17,6 +17,9 @@ Contains:
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
     ShipwrightApp.start_or_queue(): starts a turn, or queues it behind the one running
+    ShipwrightApp.action_stop_run(): stops the run in flight from the keyboard
+    ShipwrightApp.request_stop(): asks the run to stop and drops the queue
+    ShipwrightApp.on_composer_stop_requested(): stops the run from the composer control
     ShipwrightApp.show_queued(): shows a queued message above the composer
     ShipwrightApp.on_composer_queued(): shows what the composer queued
     ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
@@ -50,6 +53,7 @@ Contains:
 """
 
 import os
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -125,6 +129,7 @@ from tui.widgets.wordmark import Wordmark
 
 DEFAULT_GATEWAY_URL = "http://localhost:4000"
 ANSWER_PREFIX = "● "
+STOPPED_NOTICE = "stopped"
 NO_ANSWER_NOTICE = "(the run ended without an answer)"
 SETUP_ALREADY_OPEN = "setup is already open"
 # Earlier turns replayed into each new run. Capped so a long session cannot
@@ -230,6 +235,7 @@ class ShipwrightApp(App[None]):
         Binding("ctrl+l", "screenshot", "Screenshot"),
         # Priority, so the composer's own focus handling never swallows it.
         Binding("shift+tab", "cycle_mode", "Mode", priority=True),
+        Binding("escape", "stop_run", "Stop the run"),
     ]
 
     def __init__(
@@ -278,6 +284,7 @@ class ShipwrightApp(App[None]):
             message for turn in self.turns for message in turn.messages()
         ]
         self.live_steps: list[SavedStep] = []
+        self.stop_flag = threading.Event()
         self.active_instruction = ""
 
     def get_css_variables(self) -> dict[str, str]:
@@ -501,7 +508,10 @@ class ShipwrightApp(App[None]):
         status.display = True
         status.set_phase(Phase.PLANNING)
         # Busy from this moment, not from when the worker thread gets going: a
-        # message sent in between would otherwise start a second run.
+        # message sent in between would otherwise start a second run. The stop
+        # flag is cleared here too, for the same reason: a stop pressed after
+        # this point belongs to this run.
+        self.stop_flag.clear()
         self.query_one(Composer).mark_busy()
         self.run_task(instruction)
 
@@ -527,6 +537,7 @@ class ShipwrightApp(App[None]):
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
+        config.stop_requested = self.stop_flag.is_set
         config.tool_gate = self.tool_gate()
         config.escape_gate = self.approve_escape
         client = build_client(Provider(self.provider), self.model)
@@ -554,7 +565,10 @@ class ShipwrightApp(App[None]):
             loop = self.build_loop(instruction)
             self.active_loop = loop
             result = loop.run(on_step=lambda step: self.call_from_thread(self.append_step, step))
-            answer = result.final_answer or NO_ANSWER_NOTICE
+            if result.final_answer:
+                answer = result.final_answer
+            else:
+                answer = STOPPED_NOTICE if self.stop_flag.is_set() else NO_ANSWER_NOTICE
         except MissingCredentialError:
             answer = INFERENCE_NOT_CONFIGURED
         except RunawayRunError as exc:
@@ -674,6 +688,33 @@ class ShipwrightApp(App[None]):
         timeline.mount(panel)
         timeline.scroll_end(animate=False)
         panel.focus()
+
+    def action_stop_run(self) -> None:
+        """Stops the run in flight, leaving what it has already done in place."""
+        self.request_stop()
+
+    def request_stop(self) -> None:
+        """Asks the run in flight to stop at its next step.
+
+        Anything already queued behind it is dropped: stopping is for taking
+        back control, not for working through the rest of the queue.
+        """
+        composer = self.query_one(Composer)
+        if not composer.is_busy:
+            return
+        self.stop_flag.set()
+        composer.pending.clear()
+        self.query("#region-queue .queued").remove()
+        self.query_one(StatusLine).set_phase(Phase.DONE)
+
+    def on_composer_stop_requested(self, event: Composer.StopRequested) -> None:
+        """Stops the run when the composer's stop control is used.
+
+        Args:
+            event: Notice that the stop control was clicked.
+        """
+        event.stop()
+        self.request_stop()
 
     def on_approval_panel_decided(self, event: ApprovalPanel.Decided) -> None:
         """Hands the keyboard back to the composer once a call is answered.

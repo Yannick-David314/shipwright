@@ -5,6 +5,9 @@ composer.py --- live instruction input that queues while a run is in flight
 Contains:
     QUEUED_NOTICE / SENT_NOTICE: what the composer reports back on submit
     IDLE_PROMPT / BUSY_PROMPT: placeholder text per run state
+    STOP_ID / STOP_GLYPH / STOP_TOOLTIP: the stop control shown while a run is in flight
+    Composer.StopRequested: reports that the run in flight should stop
+    Composer.on_click(): asks for the run to stop when the control is clicked
     Composer: input that sends when idle and queues while a run is running
     Composer.prompt_text(): the placeholder matching the current run state
     Composer.compose(): builds the input line
@@ -18,6 +21,7 @@ Contains:
     Composer.Submitted: carries an instruction that is ready to run
 """
 
+from textual import events
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widgets import Input, Static
@@ -25,6 +29,9 @@ from textual.widgets import Input, Static
 from agent.repo_map import RepoMap
 
 INPUT_ID = "composer-input"
+STOP_ID = "composer-stop"
+STOP_GLYPH = "■"
+STOP_TOOLTIP = "Stop this run (esc)"
 QUEUED_NOTICE = "queued"
 SENT_NOTICE = "sent"
 IDLE_PROMPT = "Queue a message"
@@ -92,18 +99,61 @@ class Composer(Static):
         """
         return BUSY_PROMPT if self.is_busy else IDLE_PROMPT
 
+    DEFAULT_CSS = """
+    Composer {
+        layout: horizontal;
+    }
+    Composer #composer-input {
+        width: 1fr;
+    }
+    /* Only there while a run is: nothing to stop otherwise. */
+    Composer #composer-stop {
+        display: none;
+        width: 5;
+        height: 3;
+        content-align: center middle;
+        color: $error;
+    }
+    Composer.busy #composer-stop {
+        display: block;
+    }
+    Composer #composer-stop:hover {
+        background: $error;
+        color: $text;
+    }
+    """
+
+    class StopRequested(Message):
+        """Reports that the operator asked the run in flight to stop."""
+
     def compose(self) -> ComposeResult:
-        """Builds the single-line instruction input."""
+        """Builds the instruction input beside the stop control."""
         yield Input(placeholder=self.prompt_text(), id=INPUT_ID)
+        stop = Static(STOP_GLYPH, id=STOP_ID)
+        stop.tooltip = STOP_TOOLTIP
+        yield stop
+
+    def on_click(self, event: events.Click) -> None:
+        """Asks for the run to stop when the stop control is clicked.
+
+        Args:
+            event: The click, which may be anywhere in the composer.
+        """
+        widget = event.widget
+        if widget is not None and widget.id == STOP_ID:
+            event.stop()
+            self.post_message(self.StopRequested())
 
     def mark_busy(self) -> None:
         """Records that a run has started, so later input is queued."""
         self.is_busy = True
+        self.add_class("busy")
         self._outlines_are_stale = True
 
     def mark_idle(self) -> None:
         """Records that the run finished, so the next instruction sends directly."""
         self.is_busy = False
+        self.remove_class("busy")
         self._outlines_are_stale = True
 
     def submit(self, text: str) -> str:
