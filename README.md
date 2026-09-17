@@ -285,7 +285,9 @@ a turn showing what the agent did and the diff it produced.
 
 Each turn collapses the run into activity cards — `Read`, `Edited`, `Ran` — each
 holding what went in, the diff it produced, and what came out, followed by a
-summary of what the turn changed and how it was checked. The composer stays live
+summary of what the turn changed and how it was checked. A turn that changed
+files does not finish until it has run them, or read them back, and fixed
+whatever that turned up. The composer stays live
 while a run is in flight: anything typed meanwhile waits in a `queued` box above
 the chat box and starts when the agent frees up. A run can be interrupted with
 `esc`, or the red square beside the chat box, which also drops the queue.
