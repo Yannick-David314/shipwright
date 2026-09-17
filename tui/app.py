@@ -65,7 +65,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Label, Static
+from textual.widgets import Static
 
 from agent.circuit_breaker import CircuitBreaker, RunawayRunError
 from agent.cost_tracker import CostTracker
@@ -939,7 +939,9 @@ class ShipwrightApp(App[None]):
         self.remember_turn(self.active_instruction, answer)
         timeline = self.query_one(Timeline)
         timeline.finish_turn(answer)
-        timeline.mount(Label(f"{ANSWER_PREFIX}{answer}"))
+        # Text, not markup: a summary may hold brackets, and it may run to
+        # several lines.
+        timeline.mount(Static(Text(f"{ANSWER_PREFIX}{answer}")))
         timeline.scroll_end(animate=False)
         self.query_one(StatusLine).stop()
         self.refresh_context_bar()

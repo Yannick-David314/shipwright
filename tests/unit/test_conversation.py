@@ -8,6 +8,7 @@ Contains:
     test_final_without_tools_is_still_refused(): claiming work still needs a tool
     test_reply_is_not_accepted_outside_conversation(): headless runs keep the old rules
     test_conversational_prompt_explains_reply(): the model is told when to reply
+    test_final_answer_is_asked_to_be_a_summary(): finishing asks for a real summary
 """
 
 from agent.circuit_breaker import CircuitBreaker
@@ -75,3 +76,12 @@ def test_conversational_prompt_explains_reply() -> None:
 
     assert CONVERSATION_INSTRUCTIONS in chatty
     assert CONVERSATION_INSTRUCTIONS not in headless
+
+
+def test_final_answer_is_asked_to_be_a_summary() -> None:
+    """Asserts the instructions ask for a summary of the work, not one sentence."""
+    prompt = AgentLoop(ScriptedLLM([]), _config(False, task="fix the bug"))._build_system_prompt()
+
+    assert "FINAL: <summary>" in prompt
+    assert "file by file" in prompt
+    assert "what you ran to check it" in prompt
