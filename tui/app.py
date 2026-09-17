@@ -540,6 +540,8 @@ class ShipwrightApp(App[None]):
             cost_tracker=self.cost_tracker,
             # A chat window gets greetings and questions, not only tasks.
             conversational=True,
+            # Nobody is watching the steps go by, so the run checks its own work.
+            verify_before_final=True,
         )
         config.breaker = self.breaker
         config.history = list(self.conversation)
