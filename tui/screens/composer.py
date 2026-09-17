@@ -56,6 +56,22 @@ class Composer(Static):
             super().__init__()
             self.instruction = instruction
 
+    class Queued(Message):
+        """Reports an instruction held back because a run is in flight.
+
+        Attributes:
+            instruction: Text the operator submitted.
+        """
+
+        def __init__(self, instruction: str) -> None:
+            """Records the instruction being queued.
+
+            Args:
+                instruction: Text the operator submitted.
+            """
+            super().__init__()
+            self.instruction = instruction
+
     def __init__(self, repo_map: RepoMap | None = None) -> None:
         """Builds the composer, optionally sharing an outline cache.
 
@@ -106,6 +122,7 @@ class Composer(Static):
         self._refresh_outlines()
         if self.is_busy:
             self.pending.append(instruction)
+            self.post_message(self.Queued(instruction))
             return QUEUED_NOTICE
 
         self.post_message(self.Submitted(instruction))

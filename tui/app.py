@@ -17,6 +17,8 @@ Contains:
     ShipwrightApp.register_commands(): binds each slash command to its handler
     ShipwrightApp.on_mount(): wires the slash commands once mounted
     ShipwrightApp.start_or_queue(): starts a turn, or queues it behind the one running
+    ShipwrightApp.show_queued(): shows a queued message above the composer
+    ShipwrightApp.on_composer_queued(): shows what the composer queued
     ShipwrightApp.show_notice(): writes a slash command's reply into the transcript
     ShipwrightApp.on_composer_submitted(): routes a submitted line
     ShipwrightApp.handle_line(): runs a command or starts a turn
@@ -123,6 +125,7 @@ SETUP_ALREADY_OPEN = "setup is already open"
 HISTORY_TURN_LIMIT = 12
 ONBOARDED_MARKER = "onboarded"
 PLAN_DECISION_TIMEOUT_S = 300.0
+QUEUED_TITLE = "queued"
 USAGE_MODE = "usage: /mode [manual|edit|plan|bypass]"
 MODE_MARKERS: dict[PermissionMode, str] = {
     PermissionMode.MANUAL: "⏸",
@@ -188,6 +191,18 @@ class ShipwrightApp(App[None]):
         height: 1;
         padding: 0 2;
         color: $activity;
+    }
+    #region-queue {
+        height: auto;
+        max-height: 12;
+        padding: 0 2;
+    }
+    #region-queue .queued {
+        height: auto;
+        padding: 0 1;
+        border: round $border-subtle;
+        border-title-color: $text-muted;
+        color: $text-muted;
     }
     #region-composer {
         height: 3;
@@ -321,6 +336,8 @@ class ShipwrightApp(App[None]):
         status.display = False
         yield status
 
+        yield Vertical(id="region-queue")
+
         composer = Composer()
         composer.id = REGION_IDS[2]
         yield composer
@@ -420,8 +437,28 @@ class ShipwrightApp(App[None]):
         composer = self.query_one(Composer)
         if composer.is_busy:
             composer.pending.append(instruction)
+            self.show_queued(instruction)
             return
         self.start_turn_for(instruction)
+
+    def show_queued(self, instruction: str) -> None:
+        """Shows a queued message above the composer until its turn starts.
+
+        Args:
+            instruction: Message waiting for the current run to finish.
+        """
+        box = Static(Text(instruction), classes="queued")
+        box.border_title = QUEUED_TITLE
+        self.query_one("#region-queue").mount(box)
+
+    def on_composer_queued(self, event: Composer.Queued) -> None:
+        """Shows a message the composer queued because a run was in flight.
+
+        Args:
+            event: Message carrying the queued instruction.
+        """
+        event.stop()
+        self.show_queued(event.instruction)
 
     def show_notice(self, notice: str) -> None:
         """Writes a slash command's reply into the transcript.
@@ -839,6 +876,9 @@ class ShipwrightApp(App[None]):
         composer.mark_idle()
         queued = composer.take_next()
         if queued is not None:
+            boxes = self.query("#region-queue .queued")
+            if boxes:
+                boxes.first().remove()
             self.start_turn_for(queued)
 
     def on_composer_submitted(self, event: Composer.Submitted) -> None:

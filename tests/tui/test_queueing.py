@@ -5,9 +5,9 @@ test_queueing.py --- covers messages sent while the agent is still working
 Contains:
     configured: keeps onboarding out of the way of the composer
     SlowApp: app whose runs take a moment and record the order they ran in
-    _type_and_send(): types a line into the composer and presses Enter
     _wait_until_idle(): waits for every run and queued message to finish
     test_message_sent_while_working_waits_its_turn(): runs never overlap
+    test_queued_message_is_shown_until_its_turn(): a queued box sits above the composer
 """
 
 import asyncio
@@ -103,18 +103,6 @@ class SlowApp(ShipwrightApp):
         return Tracked(SlowLLM([f"REPLY: done with {instruction}"]), config)
 
 
-async def _type_and_send(pilot: Pilot[None], line: str) -> None:
-    """Types a line into the composer and presses Enter.
-
-    Args:
-        pilot: Pilot driving the app.
-        line: Text to send.
-    """
-    for character in line:
-        await pilot.press("space" if character == " " else character)
-    await pilot.press("enter")
-
-
 async def _wait_until_idle(app: ShipwrightApp, pilot: Pilot[None]) -> None:
     """Waits until no run is in flight and nothing is left in the queue.
 
@@ -149,3 +137,28 @@ def test_message_sent_while_working_waits_its_turn(tmp_path: Path) -> None:
     assert started == ["one", "two"]
     assert answers == ["done with one", "done with two"]
     assert app.overlapped is False
+
+
+def test_queued_message_is_shown_until_its_turn(tmp_path: Path) -> None:
+    """Asserts a message typed mid-run shows as queued, then leaves when it starts."""
+    app = SlowApp(tmp_path)
+
+    async def _run() -> tuple[list[tuple[str, str]], int]:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            composer = app.query_one(Composer)
+            composer.submit("one")
+            await pilot.pause()
+            composer.submit("two")
+            await pilot.pause()
+            shown = [
+                (str(box.render()), str(box.border_title))
+                for box in app.query("#region-queue .queued")
+            ]
+            await _wait_until_idle(app, pilot)
+            return shown, len(app.query("#region-queue .queued"))
+
+    shown, left = asyncio.run(_run())
+
+    assert shown == [("two", "queued")]
+    assert left == 0
